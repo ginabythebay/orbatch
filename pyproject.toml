@@ -1,0 +1,94 @@
+[project]
+name = "orbatch"
+version = "0.1.0"
+description = "Issue and batch tooling"
+readme = "README.md"
+requires-python = "==3.13.*"
+dependencies = [
+    "ghgql",
+    "orbit",
+    "review",
+    "snippets",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.2",
+    # Upper bound deliberate: click 8.2 dropped CliRunner's mix_stderr and
+    # reworded its parse errors, which the orbit, review and snippets suites
+    # assert on.
+    "click>=8.1.8,<8.2",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.0.0",
+    "pytest-sugar>=1.1.1",
+    "pytest-xdist[psutil]>=3.8.0",
+    "pyyaml>=6.0",
+    # Upper bound deliberate: a ruff minor bump expands the default rule set,
+    # which lands as a pile of new findings unless the ignore list is
+    # re-derived first.
+    "ruff>=0.16,<0.17",
+]
+
+[tool.uv.workspace]
+members = ["packages/*", "tools/*"]
+
+[tool.uv.sources]
+ghgql = { workspace = true }
+orbit = { workspace = true }
+review = { workspace = true }
+snippets = { workspace = true }
+
+[tool.pyright]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+]
+reportUnusedImport = "warning"
+reportUnusedClass = "warning"
+reportUnusedFunction = "warning"
+reportDuplicateImport = "warning"
+reportDeprecated = "warning"
+reportUnknownArgumentType = "warning"
+reportUnknownParameterType = "warning"
+reportMissingParameterType = "warning"
+reportAttributeAccessIssue = "warning"
+reportImportCycles = "error"
+reportUnusedCallResult = "none"
+reportCallInDefaultInitializer = "none"
+# PyCharm's basedpyright language server reads only this file and has no way
+# to be handed an interpreter, so the venv must be named here or every import
+# in the IDE resolves to nothing. Where uv's environment is elsewhere,
+# dev/lint redirects basedpyright to it.
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+# No marker filter here: a bare `pytest` runs the full suite, so CI cannot
+# silently drop the slow tests. Local runs deselect them in conftest.py
+# (pytest_collection_modifyitems); pass --slow to include them.
+addopts = "--import-mode=importlib --dist worksteal"
+testpaths = ["tests", "packages/ghgql/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
+tmp_path_retention_policy = "failed"
+filterwarnings = [
+    "error",
+]
+markers = [
+    "slow: tests that build wheels, create isolated venvs, or boot full apps (e.g. the orbit TUI)",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+# The workspace roots, so isort calls every package we publish first-party
+# from every directory. Without them a module's group depends on which
+# package imports it, and the third-party block stops meaning "external".
+src = [".", "src", "packages/*/src", "tools/*/src"]
+
+[tool.ruff.lint]
+# No `select`: leaving it unset is what keeps ruff's default rule set (E4, E7,
+# E9, F) on. Anything outside it must be named in `extend-select` to run at all
+# — an entry in `ignore` alone never enabled a rule.
+extend-select = ["B", "BLE", "N", "RUF"]

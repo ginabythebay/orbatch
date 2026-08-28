@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# basedpyright resolves imports against a venv, and this repo may be checked
+# out in more than one environment at the same path, so the .venv named in
+# pyproject.toml is not correct everywhere. Ask uv which environment is
+# actually live and point basedpyright at that one.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# env -u VIRTUAL_ENV because an activated venv that uv is not using makes it
+# warn on every call; uv ignores the variable regardless.
+venv="$(env -u VIRTUAL_ENV uv run --no-sync printenv VIRTUAL_ENV)"
+python="$venv/bin/python"
+
+if [[ ! -x "$python" ]]; then
+    echo "dev/lint: no interpreter at $python" >&2
+    echo "dev/lint: run 'uv sync' first" >&2
+    exit 1
+fi
+
+if [[ $# -gt 0 ]]; then
+    targets=("$@")
+else
+    targets=(.)
+fi
+
+env -u VIRTUAL_ENV uv run ruff check "${targets[@]}"
+env -u VIRTUAL_ENV uv run ruff format --check "${targets[@]}"
+# --venvpath overrides pyproject.toml's venvPath but not its venv name, so the
+# override needs a directory that itself contains a .venv. Build one next to
+# the live environment rather than in the checkout.
+configured="$(cd .venv 2>/dev/null && pwd -P || true)"
+if [[ -n "$configured" && "$configured" == "$(cd "$venv" && pwd -P)" ]]; then
+    env -u VIRTUAL_ENV uv run basedpyright "$@"
+else
+    shim="$venv.lint"
+    mkdir -p "$shim"
+    ln -sfn "$venv" "$shim/.venv"
+    env -u VIRTUAL_ENV uv run basedpyright --venvpath "$shim" "$@"
+fi

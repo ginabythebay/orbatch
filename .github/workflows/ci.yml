@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync
+      # CI=true (set by GitHub Actions) disables the local slow-test
+      # deselection in conftest.py, so this is the full suite.
+      #
+      # -n logical, not -n auto: pytest-xdist[psutil] reads auto as *physical*
+      # cores, which resolves to 1 on a 2-vCPU runner and silently runs the
+      # suite serially.
+      - name: Test with pytest
+        run: uv run pytest -n logical
+      - name: lint
+        run: ./dev/lint

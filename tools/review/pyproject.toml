@@ -1,0 +1,17 @@
+[project]
+name = "review"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = [
+    "click>=8.1.8",
+    "markdown-it-py>=3.0",
+    "orbit",
+]
+
+[project.scripts]
+review-diff = "review.cli:main"
+review-html = "review.html:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

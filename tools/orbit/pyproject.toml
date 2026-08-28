@@ -1,0 +1,18 @@
+[project]
+name = "orbit"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = [
+    "click>=8.1.8",
+    "pydantic>=2.0",
+    "ghgql",
+    "rich>=14.0",
+    "textual>=8.2.7",
+]
+
+[project.scripts]
+orbit = "orbit.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
