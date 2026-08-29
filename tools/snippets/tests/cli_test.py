@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
@@ -12,12 +12,15 @@ import pytest
 from click.testing import CliRunner, Result
 
 import snippets.cli
+from ghgql.repo import Repo
 from orbit.github.models import MilestoneSummary, ParentRef, PeriodIssue, PeriodPR
 from snippets.cli import (
     Annotation,
     Commit,
     Period,
     PeriodError,
+    RepoFailure,
+    RepoReport,
     Report,
     annotations_from,
     build_report,
@@ -33,7 +36,9 @@ from snippets.cli import (
     milestones_in,
     parse_period,
     print_report,
+    resolve_repos,
 )
+from snippets.config import RepoSpec
 
 
 def _period(start: str, end: str) -> Period:
@@ -277,7 +282,7 @@ class _FakeGit:
         return self.output
 
 
-def _raise_not_a_repo() -> Path:
+def _raise_not_a_repo(_cwd: Path | None = None) -> Path:
     raise RuntimeError("Failed to determine repository root: not a git repository")
 
 
@@ -285,12 +290,10 @@ class _FakeDiscovery:
     def __init__(self, root: Path, git: _FakeGit) -> None:
         self.root: Path = root
         self.git: _FakeGit = git
-        self.discoveries: int = 0
         self.roots: list[Path] = []
 
-    def repo_root(self) -> Path:
-        self.discoveries += 1
-        return self.root
+    def repo_root(self, cwd: Path | None = None) -> Path:
+        return self.root if cwd is None else cwd
 
     def git_in(self, root: Path) -> _FakeGit:
         self.roots.append(root)
@@ -439,8 +442,14 @@ class TestAnnotationsFrom:
 class TestCountDeploys:
     def test_no_token_skips_without_reaching_the_network(self) -> None:
         fetch = _FakeAnnotations([_at("2026-04-05T12:00:00")])
-        assert count_deploys(_APRIL, None, fetch) is None
+        assert count_deploys(_APRIL, None, "deploy", fetch) is None
         assert fetch.calls == []
+
+    def test_queries_the_configured_tag(self) -> None:
+        fetch = _FakeAnnotations()
+        _ = count_deploys(_APRIL, "a-token", "pinky deploy", fetch)
+        ((_, url),) = fetch.calls
+        assert "tags=pinky%20deploy" in url
 
     def test_counts_only_annotations_inside_the_period(self) -> None:
         fetch = _FakeAnnotations(
@@ -451,7 +460,7 @@ class TestCountDeploys:
                 _at("2026-05-01T00:30:00"),
             ]
         )
-        assert count_deploys(_APRIL, "a-token", fetch) == 2
+        assert count_deploys(_APRIL, "a-token", "deploy", fetch) == 2
         ((token, url),) = fetch.calls
         assert token == "a-token"
         assert "tags=deploy" in url
@@ -462,7 +471,7 @@ class TestCountDeploys:
         def fetch(_token: str, _url: str) -> list[Annotation]:
             raise OSError("grafana is down")
 
-        assert count_deploys(_APRIL, "a-token", fetch) is None
+        assert count_deploys(_APRIL, "a-token", "deploy", fetch) is None
 
 
 _POPULATED_ISSUES = [
@@ -480,24 +489,31 @@ _POPULATED_ISSUES = [
 ]
 
 
-def _report(
+def _repo_report(
     issues: Sequence[PeriodIssue],
     *,
+    name: str = "a-repo",
     milestones: Sequence[MilestoneSummary] = (),
     prs: Sequence[PeriodPR] = (),
     commits: Sequence[Commit] = (),
+    deploy_tag: str | None = None,
     deploys: int | None = None,
     docs: Sequence[str] = (),
-) -> Report:
-    return Report(
-        period=_APRIL,
+) -> RepoReport:
+    return RepoReport(
+        name=name,
         milestones=tuple(milestones),
         rollup=build_rollup(issues, _APRIL),
         prs=tuple(prs),
         commits=tuple(commits),
+        deploy_tag=deploy_tag,
         deploys=deploys,
         docs=tuple(docs),
     )
+
+
+def _report(*repos: RepoReport) -> Report:
+    return Report(period=_APRIL, repos=repos)
 
 
 class TestPrintReport:
@@ -509,16 +525,19 @@ class TestPrintReport:
     def test_populated_period(self) -> None:
         lines = self._printed(
             _report(
-                _POPULATED_ISSUES,
-                milestones=[
-                    MilestoneSummary(
-                        title="config v2", state="OPEN", due_on=date(2026, 4, 30)
-                    )
-                ],
-                prs=[_pr(180, title="feat: a feature", merged="2026-04-03")],
-                commits=[Commit("aaaaaaaabbbb", "docs: a direct change")],
-                deploys=3,
-                docs=["docs/adr/0007-a-decision.md"],
+                _repo_report(
+                    _POPULATED_ISSUES,
+                    milestones=[
+                        MilestoneSummary(
+                            title="config v2", state="OPEN", due_on=date(2026, 4, 30)
+                        )
+                    ],
+                    prs=[_pr(180, title="feat: a feature", merged="2026-04-03")],
+                    commits=[Commit("aaaaaaaabbbb", "docs: a direct change")],
+                    deploy_tag="deploy",
+                    deploys=3,
+                    docs=["docs/adr/0007-a-decision.md"],
+                )
             )
         )
         assert lines[0] == "Period: 2026-04-01 to 2026-04-30"
@@ -538,19 +557,46 @@ class TestPrintReport:
         assert "docs/adr/0007-a-decision.md" in lines
 
     def test_empty_period(self) -> None:
-        lines = self._printed(_report([]))
+        lines = self._printed(_report(_repo_report([], deploy_tag="deploy")))
         assert lines[0] == "Period: 2026-04-01 to 2026-04-30"
         assert lines.count("(none)") == 6
-        assert "(skipped: no Grafana token)" in lines
+        assert "(unavailable)" in lines
 
     def test_zero_deploys_is_a_count_not_a_skip(self) -> None:
-        lines = self._printed(_report([], deploys=0))
+        lines = self._printed(_report(_repo_report([], deploy_tag="deploy", deploys=0)))
         assert "0" in lines
-        assert "(skipped: no Grafana token)" not in lines
+        assert "(unavailable)" not in lines
+
+    def test_an_untagged_repo_has_no_deploys_section(self) -> None:
+        lines = self._printed(_report(_repo_report([])))
+        assert not any(line.startswith("DEPLOYS") for line in lines)
+
+    def test_each_repo_gets_its_own_headed_sections(self) -> None:
+        lines = self._printed(
+            _report(
+                _repo_report(
+                    [_issue(12, title="work in the first", created="2026-04-08")],
+                    name="orbatch",
+                ),
+                _repo_report(
+                    [_issue(7, title="work in the second", created="2026-04-09")],
+                    name="pinky",
+                ),
+            )
+        )
+        assert lines[0] == "Period: 2026-04-01 to 2026-04-30"
+        heads = [
+            i for i, line in enumerate(lines) if "orbatch" in line or "pinky" in line
+        ]
+        assert len(heads) == 2
+        assert lines.count("STANDALONE WORK:") == 2
+        assert lines.index("#12 2026-04-08 [OPEN] work in the first") < heads[1]
+        assert lines.index("#7 2026-04-09 [OPEN] work in the second") > heads[1]
 
 
 class _FakeClient:
     def __init__(self) -> None:
+        self.targets: list[Repo] = []
         self.calls: list[tuple[date, date]] = []
         self.pr_calls: list[tuple[date, date]] = []
         self.milestone_calls: list[bool] = []
@@ -580,16 +626,37 @@ _GIT_OUTPUT = (
 _DISCOVERED_ROOT = Path("/somewhere/a-checkout")
 
 
+def _serving(client: _FakeClient) -> Callable[[Repo], _FakeClient]:
+    def factory(target: Repo) -> _FakeClient:
+        client.targets.append(target)
+        return client
+
+    return factory
+
+
+def _fake_repo(root: Path) -> Repo:
+    return Repo("an-org", root.name)
+
+
 class TestCli:
     def _run(
-        self, args: Sequence[str], monkeypatch: pytest.MonkeyPatch
+        self,
+        args: Sequence[str],
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        config: Path = Path("/nonexistent/snippets.toml"),
+        root_finder: Callable[[Path | None], Path] | None = None,
     ) -> tuple[Result, _FakeClient, _FakeDiscovery]:
         client = _FakeClient()
         discovery = _FakeDiscovery(_DISCOVERED_ROOT, _FakeGit(_GIT_OUTPUT))
-        monkeypatch.setattr(snippets.cli, "github_client", lambda: client)
+        monkeypatch.setattr(snippets.cli, "github_client", _serving(client))
         monkeypatch.setattr(snippets.cli, "_today", lambda: date(2026, 4, 15))
-        monkeypatch.setattr(snippets.cli, "repo_root", discovery.repo_root)
+        monkeypatch.setattr(
+            snippets.cli, "repo_root", root_finder or discovery.repo_root
+        )
+        monkeypatch.setattr(snippets.cli, "repo", _fake_repo)
         monkeypatch.setattr(snippets.cli, "git_in", discovery.git_in)
+        monkeypatch.setattr(snippets.cli, "config_path", lambda: config)
         monkeypatch.setattr(
             snippets.cli, "DEPLOY_TOKEN_FILE", Path("/nonexistent/token")
         )
@@ -622,25 +689,102 @@ class TestCli:
         _, _, discovery = self._run([], monkeypatch)
         assert discovery.roots == [_DISCOVERED_ROOT]
 
-    def test_discovers_the_root_once_for_every_consumer(
+    def test_one_git_binding_serves_every_consumer(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _, _, discovery = self._run([], monkeypatch)
-        assert discovery.discoveries == 1
+        assert len(discovery.roots) == 1
         assert len(discovery.git.calls) > 1
 
     def test_a_repoless_directory_fails_before_any_github_call(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = _FakeClient()
-        monkeypatch.setattr(snippets.cli, "github_client", lambda: client)
+        monkeypatch.setattr(snippets.cli, "github_client", _serving(client))
         monkeypatch.setattr(snippets.cli, "_today", lambda: date(2026, 4, 15))
         monkeypatch.setattr(snippets.cli, "repo_root", _raise_not_a_repo)
 
-        with pytest.raises(RuntimeError, match="Failed to determine repository root"):
-            _ = build_report(_period("2026-04-15", "2026-04-15"))
+        report = build_report(
+            _period("2026-04-15", "2026-04-15"), [RepoSpec(Path("/nowhere"))]
+        )
 
+        (failure,) = report.repos
+        assert isinstance(failure, RepoFailure)
+        assert "Failed to determine repository root" in failure.message
         assert client.calls == []
+
+    def test_repo_flags_report_on_every_named_checkout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, client, discovery = self._run(
+            ["--repo", "/src/orbatch", "--repo", "/src/pinky"], monkeypatch
+        )
+        assert result.exit_code == 0
+        assert discovery.roots == [Path("/src/orbatch"), Path("/src/pinky")]
+        assert len(client.calls) == 2
+        assert "orbatch" in result.stdout
+        assert "pinky" in result.stdout
+
+    def test_each_repo_is_queried_against_its_own_slug(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, client, _ = self._run(
+            ["--repo", "/src/orbatch", "--repo", "/src/pinky"], monkeypatch
+        )
+        assert [target.name for target in client.targets] == ["orbatch", "pinky"]
+
+    def test_one_unusable_repo_does_not_cost_the_others(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def sometimes_missing(cwd: Path | None = None) -> Path:
+            if cwd is not None and cwd.name == "gone":
+                raise RuntimeError("Failed to determine repository root: no such repo")
+            return cwd or _DISCOVERED_ROOT
+
+        result, client, _ = self._run(
+            ["--repo", "/src/gone", "--repo", "/src/pinky"],
+            monkeypatch,
+            root_finder=sometimes_missing,
+        )
+        assert result.exit_code == 0
+        assert "(skipped: Failed to determine repository root" in result.stdout
+        assert "#180 2026-04-15 feat: a feature" in result.stdout
+        assert len(client.calls) == 1
+
+    def test_configured_repos_are_used_when_no_flag_is_given(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = tmp_path / "snippets.toml"
+        _ = config.write_text('[[repo]]\npath = "/src/pinky"\ndeploy_tag = "deploy"\n')
+        result, _, discovery = self._run([], monkeypatch, config=config)
+        assert discovery.roots == [Path("/src/pinky")]
+        assert "DEPLOYS:" in result.stdout
+
+    def test_a_flag_overrides_the_configured_repos(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = tmp_path / "snippets.toml"
+        _ = config.write_text('[[repo]]\npath = "/src/pinky"\n')
+        _, _, discovery = self._run(
+            ["--repo", "/src/orbatch"], monkeypatch, config=config
+        )
+        assert discovery.roots == [Path("/src/orbatch")]
+
+    def test_a_broken_config_exits_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = tmp_path / "snippets.toml"
+        _ = config.write_text("[[repo]]\nname = 42\n")
+        result, client, _ = self._run([], monkeypatch, config=config)
+        assert result.exit_code == 1
+        assert 'needs a non-empty "path"' in result.stderr
+        assert client.calls == []
+
+    def test_a_repo_without_a_deploy_tag_reports_no_deploys(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, _, _ = self._run(["--repo", "/src/orbatch"], monkeypatch)
+        assert "DEPLOYS" not in result.stdout
 
     def test_unparseable_period_exits_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
         result, client, _ = self._run(["not a period"], monkeypatch)
@@ -669,6 +813,10 @@ def _checkout_with_a_commit(root: Path, subject: str) -> None:
     _git(["git", "init", "-q", "-b", "main"], root)
     _git(["git", "config", "user.email", "test@example.com"], root)
     _git(["git", "config", "user.name", "A Tester"], root)
+    _git(
+        ["git", "remote", "add", "origin", "git@github.com:example-org/a-repo.git"],
+        root,
+    )
     (root / "a-file").write_text("contents\n")
     _git(["git", "add", "a-file"], root)
     _git(["git", "commit", "-qm", subject], root)
@@ -704,13 +852,43 @@ class TestReportingOnTheSurroundingCheckout:
         nested = checkout / "deep" / "nested"
         nested.mkdir(parents=True)
         monkeypatch.chdir(nested)
-        monkeypatch.setattr(snippets.cli, "github_client", lambda: _FakeClient())
+        monkeypatch.setattr(snippets.cli, "github_client", _serving(_FakeClient()))
+        monkeypatch.setattr(
+            snippets.cli, "config_path", lambda: tmp_path / "nonexistent.toml"
+        )
         monkeypatch.setattr(
             snippets.cli, "DEPLOY_TOKEN_FILE", Path("/nonexistent/token")
         )
 
-        report = build_report(_period("2026-04-15", "2026-04-15"))
+        report = build_report(_period("2026-04-15", "2026-04-15"), resolve_repos([]))
 
-        assert [c.subject for c in report.commits] == [
+        (only,) = report.repos
+        assert isinstance(only, RepoReport)
+        assert only.name == "a-repo"
+        assert [c.subject for c in only.commits] == [
             "chore: from the surrounding checkout"
         ]
+
+    def test_a_nested_path_flag_resolves_to_its_checkout_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-04-15T12:00:00")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-04-15T12:00:00")
+        _checkout_with_a_commit(checkout, "chore: from a named checkout")
+        nested = checkout / "deep"
+        nested.mkdir()
+        monkeypatch.setattr(snippets.cli, "github_client", _serving(_FakeClient()))
+        monkeypatch.setattr(
+            snippets.cli, "DEPLOY_TOKEN_FILE", Path("/nonexistent/token")
+        )
+
+        report = build_report(
+            _period("2026-04-15", "2026-04-15"), [RepoSpec(path=nested)]
+        )
+
+        (only,) = report.repos
+        assert isinstance(only, RepoReport)
+        assert only.name == "a-repo"
+        assert [c.subject for c in only.commits] == ["chore: from a named checkout"]

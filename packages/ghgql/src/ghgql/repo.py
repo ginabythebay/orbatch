@@ -10,13 +10,18 @@ class Repo(NamedTuple):
     name: str
 
 
-def repo_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
+def _git(args: list[str], cwd: Path | None) -> subprocess.CompletedProcess[str]:
+    prefix = [] if cwd is None else ["-C", str(cwd)]
+    return subprocess.run(
+        ["git", *prefix, *args],
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def repo_root(cwd: Path | None = None) -> Path:
+    result = _git(["rev-parse", "--show-toplevel"], cwd)
     if result.returncode != 0:
         raise RuntimeError(
             f"Failed to determine repository root: {result.stderr.strip()}"
@@ -24,13 +29,8 @@ def repo_root() -> Path:
     return Path(result.stdout.strip())
 
 
-def repo() -> Repo:
-    result = subprocess.run(
-        ["git", "remote", "get-url", "origin"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def repo(cwd: Path | None = None) -> Repo:
+    result = _git(["remote", "get-url", "origin"], cwd)
     if result.returncode != 0:
         raise RuntimeError(f"Failed to determine repository: {result.stderr.strip()}")
     return _parse_github_url(result.stdout.strip())

@@ -38,3 +38,21 @@ dev/lint
 `.orbit.toml` at the repo root names the current sprint milestone and the
 backlog. `orbit` discovers it through `git rev-parse --show-toplevel`, so
 commands work from any subdirectory.
+
+`$XDG_CONFIG_HOME/orbatch/snippets.toml` (by default
+`~/.config/orbatch/snippets.toml`) lists the checkouts a `snippets` rollup
+covers. Each entry needs a `path`; the GitHub slug comes from that
+checkout's `origin` remote. A repo reports deploy counts only if it names
+the Grafana annotation tag to count.
+
+```toml
+[[repo]]
+path = "~/Source/vpink/orbatch"
+
+[[repo]]
+path = "~/Source/vpink/pinky"
+deploy_tag = "deploy"
+```
+
+With no such file, `snippets` reports on the surrounding checkout alone.
+`snippets --repo PATH` (repeatable) replaces the configured list.

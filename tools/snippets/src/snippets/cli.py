@@ -22,15 +22,17 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import IO, TextIO, cast
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from ghgql.repo import repo_root
+from ghgql.repo import repo, repo_root
 from orbit.github.client import github_client
 from orbit.github.models import MilestoneSummary, PeriodIssue, PeriodPR
+from snippets.config import ConfigError, RepoSpec, config_path, load_repos
 
 PROG_NAME = "dev/snippets.py"
 
@@ -89,14 +91,30 @@ class Commit:
 
 
 @dataclass(frozen=True)
-class Report:
-    period: Period
+class RepoReport:
+    name: str
     milestones: tuple[MilestoneSummary, ...]
     rollup: Rollup
     prs: tuple[PeriodPR, ...]
     commits: tuple[Commit, ...]
+    deploy_tag: str | None
     deploys: int | None
     docs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RepoFailure:
+    name: str
+    message: str
+
+
+type RepoResult = RepoReport | RepoFailure
+
+
+@dataclass(frozen=True)
+class Report:
+    period: Period
+    repos: tuple[RepoResult, ...]
 
 
 @dataclass(frozen=True)
@@ -217,7 +235,7 @@ def annotations_from(raw: Sequence[Mapping[str, object]]) -> list[Annotation]:
 
 
 def count_deploys(
-    period: Period, token: str | None, fetch: FetchAnnotations
+    period: Period, token: str | None, tag: str, fetch: FetchAnnotations
 ) -> int | None:
     if token is None:
         return None
@@ -230,7 +248,10 @@ def count_deploys(
         ).timestamp()
         * 1000
     )
-    url = f"{_GRAFANA_ANNOTATIONS}?tags=deploy&from={start_ms}&to={end_ms}&limit=500"
+    url = (
+        f"{_GRAFANA_ANNOTATIONS}"
+        f"?tags={quote(tag)}&from={start_ms}&to={end_ms}&limit=500"
+    )
     try:
         annotations = fetch(token, url)
     except Exception:  # noqa: BLE001
@@ -370,6 +391,22 @@ def _standalone(issue: PeriodIssue, period: Period) -> StandaloneIssue:
 def print_report(report: Report, out: TextIO) -> None:
     console = Console(file=out, highlight=False)
     console.print(f"Period: {report.period.start} to {report.period.end}")
+    for result in report.repos:
+        console.print()
+        console.print(_repo_rule(result.name, console.width))
+        if isinstance(result, RepoFailure):
+            console.print()
+            console.print(f"  (skipped: {result.message})")
+            continue
+        _print_repo(result, console)
+
+
+def _repo_rule(name: str, width: int) -> str:
+    head = f"── {name} "
+    return head + "─" * max(width - len(head), 3)
+
+
+def _print_repo(report: RepoReport, console: Console) -> None:
     _section(console, "MILESTONES", [_milestone_line(m) for m in report.milestones])
     console.print()
     console.print("EPIC ACTIVITY:")
@@ -395,12 +432,13 @@ def print_report(report: Report, out: TextIO) -> None:
         "DIRECT COMMITS",
         [f"{c.sha[:7]} {c.subject}" for c in report.commits],
     )
-    _section(
-        console,
-        "DEPLOYS",
-        [] if report.deploys is None else [str(report.deploys)],
-        empty="(skipped: no Grafana token)",
-    )
+    if report.deploy_tag is not None:
+        _section(
+            console,
+            "DEPLOYS",
+            [] if report.deploys is None else [str(report.deploys)],
+            empty="(unavailable)",
+        )
     _section(console, "CHANGED DOCS", list(report.docs))
 
 
@@ -444,29 +482,72 @@ def _today() -> date:
 
 @click.command()
 @click.argument("period_words", metavar="[PERIOD]", nargs=-1)
-def cli(period_words: tuple[str, ...]) -> None:
+@click.option(
+    "--repo",
+    "repo_paths",
+    metavar="PATH",
+    multiple=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="A checkout to report on; repeatable. Replaces the configured repos.",
+)
+def cli(period_words: tuple[str, ...], repo_paths: tuple[Path, ...]) -> None:
     """Roll up issue activity for PERIOD (default: today)."""
     text = " ".join(period_words) or "today"
     try:
         period = parse_period(text, _today())
     except PeriodError as exc:
         raise click.ClickException(str(exc)) from exc
-    print_report(build_report(period), sys.stdout)
+    try:
+        specs = resolve_repos(repo_paths)
+    except ConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    print_report(build_report(period, specs), sys.stdout)
 
 
-def build_report(period: Period) -> Report:
-    git = git_in(repo_root())
-    client = github_client()
-    issues = client.search_period_issues(period.start, period.end)
-    prs = client.search_period_prs(period.start, period.end)
+def resolve_repos(repo_paths: Sequence[Path]) -> tuple[RepoSpec, ...]:
+    """The checkouts to report on: the flags, else the config, else the cwd's."""
+    if repo_paths:
+        return tuple(RepoSpec(path=path) for path in repo_paths)
+    configured = load_repos(config_path())
+    if configured is not None:
+        return configured
+    return (RepoSpec(path=repo_root()),)
+
+
+def build_report(period: Period, specs: Sequence[RepoSpec]) -> Report:
+    token = read_deploy_token(DEPLOY_TOKEN_FILE)
     return Report(
         period=period,
+        repos=tuple(_repo_result(period, spec, token) for spec in specs),
+    )
+
+
+def _repo_result(period: Period, spec: RepoSpec, token: str | None) -> RepoResult:
+    """One repo's rollup, or its failure: a stale path must not cost the rest."""
+    try:
+        return _build_repo_report(period, spec, token)
+    except RuntimeError as exc:
+        return RepoFailure(name=spec.path.name, message=str(exc))
+
+
+def _build_repo_report(period: Period, spec: RepoSpec, token: str | None) -> RepoReport:
+    root = repo_root(spec.path)
+    target = repo(root)
+    git = git_in(root)
+    client = github_client(target)
+    issues = client.search_period_issues(period.start, period.end)
+    prs = client.search_period_prs(period.start, period.end)
+    return RepoReport(
+        name=target.name,
         milestones=milestones_in(issues, client.list_milestones(include_closed=True)),
         rollup=build_rollup(issues, period),
         prs=tuple(prs),
         commits=direct_commits(fetch_commits(period, git), prs),
-        deploys=count_deploys(
-            period, read_deploy_token(DEPLOY_TOKEN_FILE), fetch_annotations
+        deploy_tag=spec.deploy_tag,
+        deploys=(
+            None
+            if spec.deploy_tag is None
+            else count_deploys(period, token, spec.deploy_tag, fetch_annotations)
         ),
         docs=fetch_doc_paths(period, git),
     )

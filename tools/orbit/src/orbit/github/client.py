@@ -1121,5 +1121,5 @@ class GitHubClient:
         )
 
 
-def github_client() -> GitHubClient:
-    return GitHubClient(GitHubGraphQL(GitHubTransport()), repo())
+def github_client(target: Repo | None = None) -> GitHubClient:
+    return GitHubClient(GitHubGraphQL(GitHubTransport()), target or repo())

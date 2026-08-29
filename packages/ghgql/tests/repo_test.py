@@ -12,11 +12,20 @@ from pathlib import Path
 
 import pytest
 
-from ghgql.repo import _parse_github_url, repo_root
+from ghgql.repo import Repo, _parse_github_url, repo, repo_root
 
 
 def _git_init(path: Path) -> None:
     _ = subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
+
+
+def _add_origin(path: Path, url: str) -> None:
+    _ = subprocess.run(
+        ["git", "remote", "add", "origin", url],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
 
 
 class TestRepoRoot:
@@ -37,6 +46,47 @@ class TestRepoRoot:
         monkeypatch.chdir(tmp_path)
         with pytest.raises(RuntimeError, match="Failed to determine repository root"):
             _ = repo_root()
+
+    def test_a_given_directory_beats_the_process_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elsewhere = tmp_path / "elsewhere"
+        target = tmp_path / "target"
+        elsewhere.mkdir()
+        target.mkdir()
+        _git_init(elsewhere)
+        _git_init(target)
+        nested = target / "deep"
+        nested.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        assert repo_root(nested).resolve() == target.resolve()
+
+
+class TestRepo:
+    def test_reads_the_origin_remote(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _git_init(tmp_path)
+        _add_origin(tmp_path, "git@github.com:example-org/example-repo.git")
+        monkeypatch.chdir(tmp_path)
+
+        assert repo() == Repo("example-org", "example-repo")
+
+    def test_a_given_directory_beats_the_process_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elsewhere = tmp_path / "elsewhere"
+        target = tmp_path / "target"
+        elsewhere.mkdir()
+        target.mkdir()
+        _git_init(elsewhere)
+        _add_origin(elsewhere, "git@github.com:example-org/the-wrong-repo.git")
+        _git_init(target)
+        _add_origin(target, "git@github.com:example-org/the-right-repo.git")
+        monkeypatch.chdir(elsewhere)
+
+        assert repo(target) == Repo("example-org", "the-right-repo")
 
 
 class TestParseGithubUrl:
