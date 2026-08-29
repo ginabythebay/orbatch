@@ -593,6 +593,22 @@ class TestPrintReport:
         assert lines.index("#12 2026-04-08 [OPEN] work in the first") < heads[1]
         assert lines.index("#7 2026-04-09 [OPEN] work in the second") > heads[1]
 
+    def test_a_wide_terminal_does_not_widen_the_report(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("COLUMNS", "200")
+        out = StringIO()
+        print_report(
+            _report(
+                _repo_report(
+                    _POPULATED_ISSUES,
+                    prs=[_pr(180, title="feat: a feature", merged="2026-04-03")],
+                )
+            ),
+            out,
+        )
+        assert max(len(line) for line in out.getvalue().splitlines()) <= 80
+
 
 class _FakeClient:
     def __init__(self) -> None:

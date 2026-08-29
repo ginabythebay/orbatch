@@ -36,6 +36,8 @@ from snippets.config import ConfigError, RepoSpec, config_path, load_repos
 
 PROG_NAME = "dev/snippets.py"
 
+MAX_WIDTH = 80
+
 _MONTHS = {
     name.lower(): number for number, name in enumerate(calendar.month_name) if number
 } | {name.lower(): number for number, name in enumerate(calendar.month_abbr) if number}
@@ -389,7 +391,7 @@ def _standalone(issue: PeriodIssue, period: Period) -> StandaloneIssue:
 
 
 def print_report(report: Report, out: TextIO) -> None:
-    console = Console(file=out, highlight=False)
+    console = Console(file=out, highlight=False, width=_report_width())
     console.print(f"Period: {report.period.start} to {report.period.end}")
     for result in report.repos:
         console.print()
@@ -399,6 +401,10 @@ def print_report(report: Report, out: TextIO) -> None:
             console.print(f"  (skipped: {result.message})")
             continue
         _print_repo(result, console)
+
+
+def _report_width() -> int:
+    return min(Console().width, MAX_WIDTH)
 
 
 def _repo_rule(name: str, width: int) -> str:
