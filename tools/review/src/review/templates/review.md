@@ -30,7 +30,7 @@ does. An empty report is a valid and useful result; a padded one is
 not.
 
 Do not report:
-- style the linters already enforce (ruff, basedpyright)
+- style the linters already enforce
 - praise, summaries of what the change does, or restatements of the diff
 - speculative "consider also" work that is not a defect
 - anything whose only support is "this could be a problem" with no

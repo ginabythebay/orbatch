@@ -14,6 +14,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Final, NoReturn, TypedDict, cast
 
@@ -169,6 +170,22 @@ def template(*parts: str) -> str:
         .joinpath("templates", *parts)
         .read_text(encoding="utf-8")
     )
+
+
+def all_templates() -> dict[str, str]:
+    root = resources.files("review").joinpath("templates")
+    found: dict[str, str] = {}
+
+    def walk(node: Traversable, prefix: str) -> None:
+        for child in node.iterdir():
+            name = f"{prefix}{child.name}"
+            if child.is_dir():
+                walk(child, f"{name}/")
+            elif child.name.endswith(".md"):
+                found[name] = child.read_text(encoding="utf-8")
+
+    walk(root, "")
+    return found
 
 
 def lens_detail(lens: str) -> str:

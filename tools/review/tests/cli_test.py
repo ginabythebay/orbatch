@@ -7,6 +7,7 @@ import subprocess
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ from review.cli import (
     Session,
     _run_command,
     _run_session,
+    all_templates,
     build_report,
     claude_argv,
     lens_detail,
@@ -639,10 +641,35 @@ class TestPullRequestReview:
         assert not work_dir.exists()
 
 
+_REPO_SPECIFIC = (
+    "CONVENTIONS.md",
+    "CONTEXT.md",
+    "ops/",
+    "apps/figaro",
+    "ruff",
+    "basedpyright",
+    "pinky",
+)
+
+
 class TestTemplates:
     def test_every_lens_has_a_template(self) -> None:
         for lens in LENSES:
             assert lens_detail(lens).strip(), lens
+
+    def test_no_template_names_a_particular_repository(self) -> None:
+        for name, text in all_templates().items():
+            assert text == template(*name.split("/")), name
+            lowered = text.lower()
+            for identifier in _REPO_SPECIFIC:
+                assert identifier.lower() not in lowered, f"{name}: {identifier}"
+
+    def test_the_enumerator_covers_every_template_on_disk(self) -> None:
+        root = Path(str(resources.files("review").joinpath("templates")))
+
+        on_disk = {str(path.relative_to(root)) for path in root.rglob("*.md")}
+
+        assert set(all_templates()) == on_disk
 
     def test_templates_resolve_outside_any_checkout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -657,7 +684,13 @@ class TestTemplates:
         )
 
         assert "{{" not in prompt
-        assert "CONVENTIONS.md" in prompt
+        assert lens_detail("conventions") in prompt
+
+    def test_the_conventions_lens_instructs_discovery(self) -> None:
+        detail = lens_detail("conventions")
+
+        assert "guidance" in detail
+        assert "links" in detail
 
 
 @dataclass

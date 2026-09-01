@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from review.cli import LENSES
+from review.cli import all_templates
 
 _PACKAGE = Path(__file__).resolve().parents[1]
 
@@ -26,10 +26,5 @@ def test_the_wheel_carries_every_prompt_template(tmp_path: Path) -> None:
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
 
-    expected = [
-        "review/templates/review.md",
-        "review/templates/review-consolidate.md",
-        *(f"review/templates/lenses/{lens}.md" for lens in LENSES),
-    ]
-    for name in expected:
-        assert name in names, name
+    for template in all_templates():
+        assert f"review/templates/{template}" in names, template
