@@ -60,12 +60,6 @@ def _runner() -> CliRunner:
     return CliRunner()
 
 
-def _split_runner() -> CliRunner:
-    """Runner that keeps stdout and stderr separate, so --json stdout
-    can be parsed without informational stderr messages polluting it."""
-    return CliRunner(mix_stderr=False)
-
-
 def _fake_label_id(name: str) -> str:
     return f"LA_{name}"
 
@@ -437,7 +431,7 @@ class TestFilteredRunPlaceholders:
         with patch.object(
             client, "list_issues_by_milestone", return_value=self._issues()
         ):
-            result = _split_runner().invoke(
+            result = _runner().invoke(
                 cli, ["sprint", "--status", "OPEN", "--json"], obj=client
             )
         assert result.exit_code == 0
@@ -1086,9 +1080,7 @@ class TestMove:
             already_done=True,
         )
         with patch("orbit.cli.move_issue", return_value=mr):
-            result = _split_runner().invoke(
-                cli, ["move", "42", "800", "--json"], obj=client
-            )
+            result = _runner().invoke(cli, ["move", "42", "800", "--json"], obj=client)
         data = cast(dict[str, object], json.loads(result.stdout))
         assert data["already_done"] is True
         assert data["reopened"] == [800]
@@ -1118,11 +1110,9 @@ class TestMove:
             "orbit.cli.move_issue",
             side_effect=AlreadyDoneError("already under epic #800"),
         ):
-            result = _split_runner().invoke(
-                cli, ["move", "42", "800", "--json"], obj=client
-            )
+            result = _runner().invoke(cli, ["move", "42", "800", "--json"], obj=client)
         assert result.exit_code == 0
-        data = cast(dict[str, object], json.loads(result.output))
+        data = cast(dict[str, object], json.loads(result.stdout))
         assert data["already_done"] is True
 
     def test_json_already_done_keeps_stdout_pure(self) -> None:
@@ -1131,10 +1121,8 @@ class TestMove:
             "orbit.cli.move_issue",
             side_effect=AlreadyDoneError("already under epic #800"),
         ):
-            result = _split_runner().invoke(
-                cli, ["move", "42", "800", "--json"], obj=client
-            )
-        json.loads(result.output)  # stdout must be parseable JSON, nothing else
+            result = _runner().invoke(cli, ["move", "42", "800", "--json"], obj=client)
+        json.loads(result.stdout)  # stdout must be parseable JSON, nothing else
         assert "already under epic #800" in result.stderr
 
     def test_json_success_reports_not_already_done(self) -> None:
@@ -1385,11 +1373,9 @@ class TestSchedule:
             "orbit.cli.schedule_issue",
             side_effect=AlreadyDoneError("already in milestone 'degraded state'"),
         ):
-            result = _split_runner().invoke(
-                cli, ["schedule", "42", "--json"], obj=client
-            )
+            result = _runner().invoke(cli, ["schedule", "42", "--json"], obj=client)
         assert result.exit_code == 0
-        data = cast(dict[str, object], json.loads(result.output))
+        data = cast(dict[str, object], json.loads(result.stdout))
         assert data["already_done"] is True
 
 
@@ -1431,8 +1417,8 @@ class TestClose:
             "orbit.cli.close_issue",
             side_effect=AlreadyDoneError("Issue #42 is already closed"),
         ):
-            result = _split_runner().invoke(cli, ["close", "42", "--json"], obj=client)
-        data = cast(dict[str, object], json.loads(result.output))
+            result = _runner().invoke(cli, ["close", "42", "--json"], obj=client)
+        data = cast(dict[str, object], json.loads(result.stdout))
         assert data["already_done"] is True
         assert "already closed" in result.stderr
         assert result.exit_code == 0
@@ -1972,7 +1958,7 @@ class TestCreateStandalone:
             patch.object(client, "fetch_milestone_id", return_value="MI_1"),
             patch.object(client, "create_issue", return_value=self._created()),
         ):
-            result = _split_runner().invoke(
+            result = _runner().invoke(
                 cli, ["create", "standalone", "(20) a one-off", "--json"], obj=client
             )
 

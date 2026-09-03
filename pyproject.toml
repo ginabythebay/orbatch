@@ -14,10 +14,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.2",
-    # Upper bound deliberate: click 8.2 dropped CliRunner's mix_stderr and
-    # reworded its parse errors, which the orbit, review and snippets suites
-    # assert on.
-    "click>=8.1.8,<8.2",
+    "click>=8.5",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
     "pytest-sugar>=1.1.1",
