@@ -578,6 +578,62 @@ def test_a_long_log_line_does_not_squeeze_the_columns() -> None:
     assert "Issue 10" in first
 
 
+class TestBatchTableTitleMarkup:
+    def test_a_bracketed_title_renders_instead_of_raising(self) -> None:
+        batch = Batch(
+            targets=(1492,),
+            issues=(
+                BatchIssue(
+                    number=70,
+                    title="Drop the [/tmp] staging dir",
+                    state=BatchLabel.PLANNED,
+                ),
+            ),
+        )
+
+        assert "[/tmp]" in _table(batch)
+
+    def test_a_title_that_looks_like_a_style_is_not_swallowed(self) -> None:
+        batch = Batch(
+            targets=(1492,),
+            issues=(
+                BatchIssue(
+                    number=70, title="Handle [ci] failures", state=BatchLabel.PLANNED
+                ),
+            ),
+        )
+
+        assert "Handle [ci] failures" in _table(batch)
+
+    def test_the_state_column_keeps_its_markup(self) -> None:
+        batch = Batch(
+            targets=(1492,),
+            issues=(
+                BatchIssue(
+                    number=70,
+                    title="Handle [ci] failures",
+                    state=BatchLabel.READY_FOR_REVIEW,
+                ),
+            ),
+        )
+
+        rendered = _table(batch)
+
+        assert "ready-for-review" in rendered
+        assert "[green]" not in rendered
+
+    def test_the_table_and_the_dashboard_agree_on_a_bracketed_title(self) -> None:
+        title = "Drop the [/tmp] staging dir"
+        batch = Batch(
+            targets=(1492,),
+            issues=(BatchIssue(number=70, title=title, state=BatchLabel.PLANNED),),
+        )
+        rows = (DashboardRow(number=70, title=title, state=BatchLabel.PLANNED),)
+
+        assert title in _table(batch)
+        assert title in _dashboard(rows, selected=None)
+
+
 class TestTargetHeadings:
     def test_an_idle_run_names_every_target_rather_than_an_epic(self) -> None:
         out = io.StringIO()
