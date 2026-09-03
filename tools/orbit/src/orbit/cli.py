@@ -10,7 +10,6 @@ import click
 from click import UsageError
 from click.decorators import FC
 
-from orbit.completion import source_with_alias
 from orbit.config import ConfigError, Milestones, ProjectConfig, load_config
 from orbit.core import open_url
 from orbit.filtering import partition_filtered, partition_standalone
@@ -43,6 +42,7 @@ from orbit.text_output import (
 )
 from orbit.tree import FilteredRun, build_tree
 from orbit.tui.app import OrbitApp, run_tui
+from shellcomp.completion import source_with_alias
 
 PROG_NAME = "dev/orbit"
 SCRIPT_NAME = "orbit"

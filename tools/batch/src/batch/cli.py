@@ -16,7 +16,6 @@ from click.decorators import FC
 
 from batch.agent import PlanningAgent
 from batch.awake import awake
-from batch.completion import source_with_alias
 from batch.config import BatchConfig, ConfigError, load_config
 from batch.github.client import BatchGitHub
 from batch.lock import run_lock
@@ -83,6 +82,7 @@ from batch.watch import DEFAULT_WATCH_INTERVAL
 from batch.watch import watch as watch_passes
 from ghgql.repo import repo
 from ghgql.transport import GitHubGraphQL, GitHubTransport
+from shellcomp.completion import source_with_alias
 
 SCRIPT_NAME = "batch"
 FALLBACK_PROG = SCRIPT_NAME
