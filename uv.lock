@@ -4,6 +4,7 @@ requires-python = "==3.13.*"
 
 [manifest]
 members = [
+    "batch",
     "ghgql",
     "orbatch",
     "orbit",
@@ -51,6 +52,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/43/ad2999f3b09eb2b1e59931d88fac0f7bcc9c17fc18c903268779bd10cc97/basedpyright-1.39.10.tar.gz", hash = "sha256:c8eaf5302f3265e275c7df4fba194d7afa7c1cb53fbfd448e90098360aca2c2e", size = 24740347, upload-time = "2026-08-13T17:09:02.51Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/be/2a/a224054d75a58786c482f63b8ff2a09fc3362268bd1ebd0a61fb3f982153/basedpyright-1.39.10-py3-none-any.whl", hash = "sha256:cbd75d83c0be841329bcfef2d2f1182f152a6d975b8eb199e75cf5b8e9a3de78", size = 13482322, upload-time = "2026-08-13T17:08:59.074Z" },
+]
+
+[[package]]
+name = "batch"
+version = "0.1.0"
+source = { editable = "tools/batch" }
+dependencies = [
+    { name = "click" },
+    { name = "ghgql" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "rich" },
+    { name = "textual" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.5" },
+    { name = "ghgql", editable = "packages/ghgql" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "requests", specifier = ">=2.32.0" },
+    { name = "rich", specifier = ">=14.0" },
+    { name = "textual", specifier = ">=8.2.7" },
 ]
 
 [[package]]
@@ -110,14 +134,11 @@ wheels = [
 
 [[package]]
 name = "click"
-version = "8.1.8"
+version = "8.5.0"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/0e/7fa0ef50764b67090eca4114772a2abf8b6148198475e54c660b97caeee6/click-8.5.0.tar.gz", hash = "sha256:ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54021bb272e34", size = 382235, upload-time = "2026-08-26T13:33:14.56Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/d4/7ebdbd03970677812aac39c869717059dbb71a4cfc033ca6e5221787892c/click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2", size = 98188, upload-time = "2024-12-21T18:38:41.666Z" },
+    { url = "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl", hash = "sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360", size = 125251, upload-time = "2026-08-26T13:33:12.928Z" },
 ]
 
 [[package]]
@@ -317,6 +338,7 @@ name = "orbatch"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "batch" },
     { name = "ghgql" },
     { name = "orbit" },
     { name = "review" },
@@ -337,6 +359,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "batch", editable = "tools/batch" },
     { name = "ghgql", editable = "packages/ghgql" },
     { name = "orbit", editable = "tools/orbit" },
     { name = "review", editable = "tools/review" },
@@ -346,7 +369,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.39.2" },
-    { name = "click", specifier = ">=8.1.8,<8.2" },
+    { name = "click", specifier = ">=8.5" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },
@@ -369,7 +392,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = ">=8.1.8" },
+    { name = "click", specifier = ">=8.5" },
     { name = "ghgql", editable = "packages/ghgql" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "rich", specifier = ">=14.0" },
@@ -634,7 +657,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = ">=8.1.8" },
+    { name = "click", specifier = ">=8.5" },
     { name = "markdown-it-py", specifier = ">=3.0" },
     { name = "orbit", editable = "tools/orbit" },
 ]
@@ -690,7 +713,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", specifier = ">=8.1.8" },
+    { name = "click", specifier = ">=8.5" },
     { name = "ghgql", editable = "packages/ghgql" },
     { name = "orbit", editable = "tools/orbit" },
     { name = "rich", specifier = ">=14.0" },

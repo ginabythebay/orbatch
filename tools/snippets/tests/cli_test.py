@@ -676,7 +676,7 @@ class TestCli:
         monkeypatch.setattr(
             snippets.cli, "DEPLOY_TOKEN_FILE", Path("/nonexistent/token")
         )
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         return runner.invoke(cli, list(args)), client, discovery
 
     def test_defaults_to_today(self, monkeypatch: pytest.MonkeyPatch) -> None:

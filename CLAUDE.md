@@ -9,9 +9,9 @@ This is a Python project. Always use Python best practices, type hints,
 and follow existing code conventions. Leave the codebase better than you
 found it.
 
-The four packages here were extracted from another repository and the
-history was squashed on import, so `git log` and `git blame` start at
-this repo's initial commit.
+The packages here were copied in from another repository without their
+history, so `git log` and `git blame` start at this repo's initial commit
+or at the commit that adopted the package.
 
 ## Response Length
 
@@ -77,8 +77,9 @@ Often `jq` will do instead.
 
 ## Architecture
 
-A uv workspace of four packages:
+A uv workspace of five packages:
 
+- `tools/batch` — drives agent VMs over a stack of issues (`batch`)
 - `tools/orbit` — GitHub issue and epic management, CLI and TUI
   (`orbit`)
 - `tools/review` — fresh-eyes code review over a diff or PR
@@ -100,8 +101,9 @@ shells out to `git rev-parse --show-toplevel`, and repo identity through
 repository path from `__file__`: it is correct inside a checkout and
 wrong once the package is installed with `uv tool install`.
 
-Test fixtures carry `example-org/example-repo` as an arbitrary repo slug.
-That is fake data, not a live dependency.
+Test fixtures carry `example-org/example-repo` as an arbitrary repo slug,
+and `tools/batch` carries `acme/widgets`. Both are fake data, not live
+dependencies.
 
 ### Package structure
 

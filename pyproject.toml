@@ -5,6 +5,7 @@ description = "Issue and batch tooling"
 readme = "README.md"
 requires-python = "==3.13.*"
 dependencies = [
+    "batch",
     "ghgql",
     "orbit",
     "review",
@@ -14,10 +15,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "basedpyright>=1.39.2",
-    # Upper bound deliberate: click 8.2 dropped CliRunner's mix_stderr and
-    # reworded its parse errors, which the orbit, review and snippets suites
-    # assert on.
-    "click>=8.1.8,<8.2",
+    "click>=8.5",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.0.0",
     "pytest-sugar>=1.1.1",
@@ -33,6 +31,7 @@ dev = [
 members = ["packages/*", "tools/*"]
 
 [tool.uv.sources]
+batch = { workspace = true }
 ghgql = { workspace = true }
 orbit = { workspace = true }
 review = { workspace = true }
@@ -70,13 +69,13 @@ pythonpath = ["."]
 # silently drop the slow tests. Local runs deselect them in conftest.py
 # (pytest_collection_modifyitems); pass --slow to include them.
 addopts = "--import-mode=importlib --dist worksteal"
-testpaths = ["tests", "packages/ghgql/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
+testpaths = ["tests", "packages/ghgql/tests", "tools/batch/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
 tmp_path_retention_policy = "failed"
 filterwarnings = [
     "error",
 ]
 markers = [
-    "slow: tests that build wheels, create isolated venvs, or boot full apps (e.g. the orbit TUI)",
+    "slow: tests that build wheels, create isolated venvs, or boot full apps (e.g. the orbit and batch TUIs)",
 ]
 
 [tool.ruff]

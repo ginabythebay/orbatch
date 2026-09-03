@@ -63,7 +63,7 @@ def test_help_is_unchanged_without_a_completion_var(
     out = capsys.readouterr().out
 
     assert code == 0
-    assert out.startswith("Usage: dev/orbit [OPTIONS] COMMAND [ARGS]...")
+    assert out.startswith("Usage: dev/orbit [OPTIONS] [COMMAND] [ARGS]...")
     listed = {line.split()[0] for line in out.splitlines() if line.startswith("  ")}
     assert {"sprint", "create", "create-epic", "move", "schedule"} <= listed
 
@@ -77,7 +77,7 @@ def test_main_parses_its_argument_not_sys_argv(
         main(["--no-such-option"])
 
     assert caught.value.code == 2
-    assert "No such option: --no-such-option" in capsys.readouterr().err
+    assert "No such option '--no-such-option'" in capsys.readouterr().err
 
 
 def test_bash_source_also_registers_the_console_script_name(

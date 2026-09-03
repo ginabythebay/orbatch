@@ -1,16 +1,18 @@
 [project]
-name = "snippets"
+name = "batch"
 version = "0.1.0"
 requires-python = "==3.13.*"
 dependencies = [
     "click>=8.5",
     "ghgql",
-    "orbit",
+    "pydantic>=2.0",
+    "requests>=2.32.0",
     "rich>=14.0",
+    "textual>=8.2.7",
 ]
 
 [project.scripts]
-snippets = "snippets.cli:main"
+batch = "batch.cli:main"
 
 [build-system]
 requires = ["hatchling"]

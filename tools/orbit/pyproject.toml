@@ -3,7 +3,7 @@ name = "orbit"
 version = "0.1.0"
 requires-python = "==3.13.*"
 dependencies = [
-    "click>=8.1.8",
+    "click>=8.5",
     "pydantic>=2.0",
     "ghgql",
     "rich>=14.0",

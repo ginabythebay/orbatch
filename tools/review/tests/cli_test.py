@@ -194,7 +194,7 @@ def _run(
 ) -> Run:
     sessions = sessions or FakeSessions()
     commands = commands or FakeCommands()
-    result = CliRunner(mix_stderr=False).invoke(
+    result = CliRunner().invoke(
         review_cli,
         args,
         obj=Deps(run_command=commands, run_session=sessions),
@@ -412,7 +412,7 @@ class TestReportAssembly:
 
     def test_an_empty_diff_is_refused_before_any_session(self) -> None:
         sessions = FakeSessions()
-        result = CliRunner(mix_stderr=False).invoke(
+        result = CliRunner().invoke(
             review_cli,
             [],
             obj=Deps(run_command=FakeCommands(has_diff=False), run_session=sessions),
