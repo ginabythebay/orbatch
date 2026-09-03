@@ -64,3 +64,33 @@ title — now asserts the full string. Correctness lens: no findings.
 Notes for next iteration: `#9` (from `#2`'s review) is still the open
 follow-up. `_title_cell` splits the first rendered line on the state word;
 it works because both renders put the title last and elapsed defaults to "".
+
+## 2026-09-03 — issue #4 foreign-repo closing keywords must not verify
+
+https://github.com/ginabythebay/orbatch/issues/4
+
+Decisions:
+- Took the issue's design: `_REFERENCE` captures the `owner/repo` prefix and
+  `closing_references(body, slug)` drops any reference whose slug differs
+  (case-insensitively). Filter lives in `body.py`, so no call site can skip it.
+- Slug comes from `BatchGitHub.repo` (`f"{owner}/{name}"`), built in
+  `fetch_pull_requests` and passed to `_to_pull_request` — the repo the query
+  actually ran against, not `BatchConfig.slug`.
+- `body_test.py` gets a local `SLUG = "acme/widgets"` rather than importing
+  `payloads.TEST_SLUG`: that file imports nothing from `batch.testing` today.
+- Payload builders `pull_request`/`pull_requests` already existed; case 6
+  needed no new fixture.
+
+Files: tools/batch/src/batch/body.py,
+tools/batch/src/batch/github/client.py,
+tools/batch/tests/body_test.py (3 new cases + slug arg at 10 call sites),
+tools/batch/tests/client_test.py (new `TestClosingReferences`).
+
+Review: one merged finding, all three lenses, fixed — the client test only
+asserted the negative (`closes == ()` for a foreign slug), which passes for
+any wrong slug incl. transposed `widgets/acme`. Now asserts `[(), (9,)]` over
+two nodes; confirmed by mutating the slug order (test fails) and restoring.
+
+Notes for next iteration: `#9` (from `#2`'s review) still open. Bare `#n` is
+still slug-agnostic by design, so client-level tests using bare references
+pin nothing about the slug — the qualified-body case is the only guard.
