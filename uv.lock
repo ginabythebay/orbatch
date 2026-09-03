@@ -670,12 +670,20 @@ dependencies = [
     { name = "orbit" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "portability" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.5" },
     { name = "markdown-it-py", specifier = ">=3.0" },
     { name = "orbit", editable = "tools/orbit" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "portability", editable = "packages/portability" }]
 
 [[package]]
 name = "rich"

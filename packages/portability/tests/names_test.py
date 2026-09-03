@@ -39,5 +39,13 @@ class TestNames:
 
         assert forbidden_words(planted.read_text()) == {_PLAIN}
 
+    @pytest.mark.parametrize(
+        "template",
+        ("{name}-tools", "v{name}", "org/{name}2"),
+        ids=("suffixed", "prefixed", "embedded"),
+    )
+    def test_a_name_joined_to_a_neighbour_is_found(self, template: str) -> None:
+        assert forbidden_words(template.format(name=_PLAIN)) == {_PLAIN}
+
     def test_a_clean_text_reports_nothing(self) -> None:
         assert forbidden_words('path = "~/Source/example/widget"\n') == set()

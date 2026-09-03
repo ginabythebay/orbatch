@@ -6,10 +6,10 @@ over the whole checkout — sources, tests, docs and config alike — so one
 failure names the file that regressed.
 
 Modules are also held to the command paths of the repo `batch` was
-extracted from. That half stays scoped to the packages that came over
-clean: `orbit`, `review` and `snippets` still carry `dev/` program names,
-tracked separately. Tests are held to the repo names alone, since they
-legitimately carry command values as fixture data.
+extracted from. That half exempts the three packages that still carry
+`dev/` program names, tracked in issue #15; every other package's `src/` is
+held to it, including any package added later. Tests are held to the repo
+names alone, since they legitimately carry command values as fixture data.
 """
 
 from __future__ import annotations
@@ -21,13 +21,17 @@ from typing import Final
 import pytest
 
 from portability import names
-from portability.names import forbidden_words
+from portability.names import NAMES, forbidden_words
 
 _ROOT: Final = Path(__file__).resolve().parents[3]
 
 _COMMAND_PATH: Final = "dev/"
 
-_COMMAND_FREE_SOURCES: Final = ("tools/batch/src", "packages/shellcomp/src")
+_COMMAND_PATH_EXEMPT: Final = (
+    "tools/orbit/src",
+    "tools/review/src",
+    "tools/snippets/src",
+)
 
 
 def _listed() -> list[Path]:
@@ -57,34 +61,42 @@ def _text(path: Path) -> str | None:
 
 
 _FILES: Final = [path for path in _listed() if _text(path) is not None]
-_MODULES: Final = [
-    path
-    for path in _FILES
-    if path.suffix == ".py"
-    and any(
-        str(path).startswith(f"{_ROOT}/{source}") for source in _COMMAND_FREE_SOURCES
+
+
+def _is_guarded_module(path: Path) -> bool:
+    relative = path.relative_to(_ROOT).as_posix()
+    return (
+        path.suffix == ".py"
+        and "/src/" in relative
+        and not relative.startswith(_COMMAND_PATH_EXEMPT)
     )
-]
+
+
+_MODULES: Final = [path for path in _FILES if _is_guarded_module(path)]
 
 
 def _ids(paths: list[Path]) -> list[str]:
     return [str(path.relative_to(_ROOT)) for path in paths]
 
 
-def _host_repo_lines(source: Path) -> list[str]:
-    text = source.read_text()
-    if not forbidden_words(text):
-        return []
+def _host_repo_lines(root: Path, source: Path) -> list[str]:
     return [
-        f"{source.relative_to(_ROOT)}:{number}"
-        for number, line in enumerate(text.splitlines(), start=1)
+        f"{source.relative_to(root)}:{number}"
+        for number, line in enumerate(source.read_text().splitlines(), start=1)
         if forbidden_words(line)
     ]
 
 
 @pytest.mark.parametrize("source", _FILES, ids=_ids(_FILES))
 def test_no_tracked_file_names_a_host_repo(source: Path) -> None:
-    assert _host_repo_lines(source) == []
+    assert _host_repo_lines(_ROOT, source) == []
+
+
+def test_a_planted_name_is_reported_with_its_line(tmp_path: Path) -> None:
+    planted = tmp_path / "fixture.py"
+    _ = planted.write_text(f'clean = "widget"\nREPO = "{NAMES[0]}"\n')
+
+    assert _host_repo_lines(tmp_path, planted) == ["fixture.py:2"]
 
 
 @pytest.mark.parametrize("source", _MODULES, ids=_ids(_MODULES))
@@ -100,3 +112,8 @@ def test_no_module_names_a_command_path(source: Path) -> None:
 
 def test_the_declaring_module_is_scanned_like_any_other_file() -> None:
     assert Path(names.__file__).resolve() in _FILES
+
+
+def test_the_command_path_sweep_reaches_the_packages_that_came_over_clean() -> None:
+    assert _ROOT / "tools/batch/src/batch/cli.py" in _MODULES
+    assert _ROOT / "packages/shellcomp/src/shellcomp/completion.py" in _MODULES

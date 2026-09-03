@@ -56,7 +56,7 @@ the Grafana annotation tag to count.
 
 ```toml
 [[repo]]
-path = "~/Source/vpink/orbatch"
+path = "~/Source/example/orbatch"
 
 [[repo]]
 path = "~/Source/example/widget"
