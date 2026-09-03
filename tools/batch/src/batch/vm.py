@@ -5,7 +5,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import uuid
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -117,11 +116,6 @@ def debug_agent_command(
             *SANDBOX_FLAGS,
         ]
     )
-
-
-def session_uuid(config: BatchConfig, issue: int) -> uuid.UUID:
-    """Matches the `uuid` `commands.session` derives; no state file."""
-    return uuid.uuid5(uuid.NAMESPACE_URL, config.issue_url(issue))
 
 
 def plan_batch_command(

@@ -55,7 +55,6 @@ from batch.vm import (
     secret_env,
     send_chain,
     session_for,
-    session_uuid,
 )
 
 
@@ -537,23 +536,6 @@ class TestDebugAgentCommand:
 
     def test_the_model_reaches_the_resumed_session(self) -> None:
         assert " --model opus " in debug_agent_command(config(), 1597, model="opus")
-
-
-class TestSessionUuid:
-    def test_one_issue_always_derives_the_same_id(self) -> None:
-        assert session_uuid(config(), 1597) == session_uuid(config(), 1597)
-
-    def test_the_id_is_pinned_across_versions(self) -> None:
-        """Transcripts on disk are named by this value; changing it orphans them."""
-        assert (
-            str(session_uuid(config(), 1597)) == "55433b09-12cb-55b2-a37b-351ad1bb6c3f"
-        )
-
-    def test_two_issues_derive_different_ids(self) -> None:
-        assert session_uuid(config(), 1597) != session_uuid(config(), 1598)
-
-    def test_two_slugs_derive_different_ids(self) -> None:
-        assert session_uuid(config(), 1597) != session_uuid(config("other/repo"), 1597)
 
 
 class TestPlanCommands:

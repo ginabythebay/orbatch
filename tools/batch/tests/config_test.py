@@ -104,14 +104,6 @@ class TestLoad:
             "acme-guest-token",
         )
 
-    def test_an_issue_url_is_derived_from_the_slug(self, tmp_path: Path) -> None:
-        root = _write(tmp_path, _VM + _repo(slug='"acme/widgets"') + _COMMANDS)
-
-        assert (
-            load_config(root).issue_url(1597)
-            == "https://github.com/acme/widgets/issues/1597"
-        )
-
 
 class TestValidation:
     def test_an_absent_config_names_the_file(self, tmp_path: Path) -> None:
