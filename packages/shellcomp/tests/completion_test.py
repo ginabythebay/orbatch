@@ -29,6 +29,7 @@ def test_bash_source_registers_the_alias_alongside_the_prog_name(
     source = source_with_alias(cli, "widget", _COMPLETE_VAR, "dev-widget")
 
     assert source is not None
+    assert f"{_COMPLETE_VAR}=bash_complete" in source
     assert [line.split()[-1] for line in _complete_lines(source)] == [
         "widget",
         "dev-widget",

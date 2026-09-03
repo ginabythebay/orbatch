@@ -3,6 +3,9 @@
 Every path it drives comes from `batch.toml`, so a second repo can adopt
 the tool unchanged. This turns the closing grep of that work into a test.
 
+`shellcomp` is swept with it: `batch.cli` calls into it on every
+invocation, so a host-repo name there would reach batch just the same.
+
 The tests are held to the repo names alone: they legitimately carry
 command values as fixture data, which no module may.
 """
@@ -14,10 +17,16 @@ from pathlib import Path
 import pytest
 
 import batch
+import shellcomp
 
 _SRC = Path(batch.__file__).parent
+_SHELLCOMP = Path(shellcomp.__file__).parent
 _TESTS = Path(__file__).parent
-_SOURCES = sorted(_SRC.rglob("*.py"))
+_SOURCES = [
+    (root, source)
+    for root in (_SRC, _SHELLCOMP)
+    for source in sorted(root.rglob("*.py"))
+]
 _TEST_SOURCES = sorted(_TESTS.rglob("*.py"))
 _REPO_NAMES = ("pinky", "moist-cupcake")
 _FORBIDDEN = ("dev/", *_REPO_NAMES)
@@ -37,10 +46,12 @@ def _declares_the_names(source: Path, line: str) -> bool:
 
 
 @pytest.mark.parametrize(
-    "source", _SOURCES, ids=[str(source.relative_to(_SRC)) for source in _SOURCES]
+    ("root", "source"),
+    _SOURCES,
+    ids=[f"{root.name}/{source.relative_to(root)}" for root, source in _SOURCES],
 )
-def test_no_module_names_the_repo_that_hosts_batch(source: Path) -> None:
-    assert _offenders(_SRC, source, _FORBIDDEN) == []
+def test_no_module_names_the_repo_that_hosts_batch(root: Path, source: Path) -> None:
+    assert _offenders(root, source, _FORBIDDEN) == []
 
 
 @pytest.mark.parametrize(

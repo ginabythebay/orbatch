@@ -11,6 +11,7 @@ Issue and batch tooling.
 | `tools/review` | `review-diff`, `review-html` | Fresh-eyes code review over a diff or PR |
 | `tools/snippets` | `snippets` | Per-epic activity and accomplishment rollups |
 | `packages/ghgql` | — | Shared GitHub GraphQL transport and repo detection |
+| `packages/shellcomp` | — | Shared bash-completion helper for the click CLIs |
 
 ## Layout
 

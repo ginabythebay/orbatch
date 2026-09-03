@@ -127,3 +127,35 @@ Notes for next iteration: `#9` (from `#2`'s review) still open. Pre-existing
 and unfixed: `watch()` only calls `report` on passes with outcomes, so during
 a long idle streak `_QuietRepeats` never resets and refusals are said once for
 the whole streak, not once per pass as its docstring claims.
+
+## 2026-09-03 — issue #6 share source_with_alias via packages/shellcomp
+
+https://github.com/ginabythebay/orbatch/issues/6
+
+Decisions:
+- Took the issue's design decision: new workspace member `packages/shellcomp`
+  (click only), not `ghgql` — ghgql has no click dep and is named for GraphQL.
+- `git mv` of batch's copy (byte-identical to orbit's) so history follows;
+  orbit's deleted. Both `cli.py` import `shellcomp.completion`.
+- Wiring: root `dependencies`, `[tool.uv.sources]`, `testpaths`, plus a
+  `shellcomp` dep in both tools' pyproject. `console_scripts_test.py` picked
+  the member up unchanged, as the issue predicted.
+- Both packages' existing `completion_test.py` left untouched (they are
+  end-to-end through `__main__`, not duplicates) and pass.
+- Test 1 asserts the two `complete` lines by last word; click nests the
+  prog-name one inside `_widget_completion_setup()`, so lines are stripped.
+
+Files: packages/shellcomp/{pyproject.toml,src/shellcomp/{__init__.py,
+completion.py,py.typed},tests/completion_test.py}, pyproject.toml, uv.lock,
+tools/{batch,orbit}/pyproject.toml, tools/{batch/src/batch,orbit/src/orbit}/
+cli.py, tools/batch/tests/portability_test.py, README.md, CLAUDE.md.
+
+Review: four merged findings, all fixed. (1) no assertion that the emitted
+script carries the requested complete var — added. (2,3) CLAUDE.md still said
+"five packages" and README's table omitted the member — both updated. (4) the
+move dropped the module from batch's portability guard — that test now sweeps
+`batch` and `shellcomp` roots, parametrized over (root, source) pairs.
+
+Notes for next iteration: `#9` (from `#2`'s review) still open. Anything that
+`batch.cli` calls but does not live under `tools/batch/src` needs adding to
+`portability_test._SOURCES` by hand — there is no automatic sweep of deps.
