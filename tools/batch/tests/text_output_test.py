@@ -578,6 +578,10 @@ def test_a_long_log_line_does_not_squeeze_the_columns() -> None:
     assert "Issue 10" in first
 
 
+def _title_cell(rendered: str) -> str:
+    return rendered.splitlines()[0].split(BatchLabel.PLANNED, 1)[1].strip()
+
+
 class TestBatchTableTitleMarkup:
     def test_a_bracketed_title_renders_instead_of_raising(self) -> None:
         batch = Batch(
@@ -591,7 +595,7 @@ class TestBatchTableTitleMarkup:
             ),
         )
 
-        assert "[/tmp]" in _table(batch)
+        assert "Drop the [/tmp] staging dir" in _table(batch)
 
     def test_a_title_that_looks_like_a_style_is_not_swallowed(self) -> None:
         batch = Batch(
@@ -630,8 +634,10 @@ class TestBatchTableTitleMarkup:
         )
         rows = (DashboardRow(number=70, title=title, state=BatchLabel.PLANNED),)
 
-        assert title in _table(batch)
-        assert title in _dashboard(rows, selected=None)
+        from_table = _title_cell(_table(batch))
+        from_dashboard = _title_cell(_dashboard(rows, selected=None))
+
+        assert from_table == from_dashboard == title
 
 
 class TestTargetHeadings:
