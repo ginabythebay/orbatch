@@ -15,7 +15,12 @@ import pytest
 from click.testing import CliRunner, Result
 
 from batch.agent import PlanningAgent
-from batch.cli import EMPTY_QUEUE_EXIT, cli, main
+from batch.cli import (
+    EMPTY_QUEUE_EXIT,
+    _watch_passes,  # pyright: ignore[reportPrivateUsage]
+    cli,
+    main,
+)
 from batch.config import BatchConfig
 from batch.lock import BatchInProgressError, run_lock
 from batch.models import (
@@ -1327,6 +1332,86 @@ class TestRunWatch:
         result = self._invoke(tmp_path, FakeState())
 
         assert result.exit_code == 130
+
+
+class TestWatchPassesWrapper:
+    def _drive(self, orchestrator: Orchestrator) -> RunResult:
+        return _watch_passes(
+            orchestrator,
+            (EPIC,),
+            0.0,
+            prog="batch",
+            report=lambda _line: None,
+            echo=False,
+        )
+
+    def _refused(self) -> FakeState:
+        state = FakeState()
+        state.closed.append(batch_issue(9))
+        return state
+
+    def test_a_line_from_the_first_call_is_said_again_on_the_second(
+        self, tmp_path: Path
+    ) -> None:
+        said: list[str] = []
+        orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
+
+        _ = self._drive(orchestrator)
+        _ = self._drive(orchestrator)
+
+        assert said == ["#9 left alone (not-merged)"] * 2
+
+    def test_the_original_report_is_back_once_the_call_returns(
+        self, tmp_path: Path
+    ) -> None:
+        said: list[str] = []
+        orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
+
+        _ = self._drive(orchestrator)
+
+        assert orchestrator.report == said.append
+
+    def test_the_original_report_is_back_after_an_interrupt(
+        self, tmp_path: Path
+    ) -> None:
+        said: list[str] = []
+
+        def interrupt(_state: FakeState) -> None:
+            raise KeyboardInterrupt
+
+        state = self._refused()
+        state.on_fetch = interrupt
+        orchestrator = _orchestrator(state, tmp_path, report=said.append)
+
+        with pytest.raises(SystemExit) as exit_code:
+            _ = self._drive(orchestrator)
+
+        assert exit_code.value.code == 130
+        assert orchestrator.report == said.append
+
+    def test_a_line_repeated_within_one_pass_is_said_once(self, tmp_path: Path) -> None:
+        said: list[str] = []
+        orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
+
+        _ = self._drive(orchestrator)
+
+        assert said == ["#9 left alone (not-merged)"]
+
+    def test_a_line_repeated_across_passes_is_said_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        said: list[str] = []
+        state = FakeState(batch_issue(10), queued_targets=(EPIC,))
+        state.closed.append(batch_issue(9))
+
+        def stop_waiting(_seconds: float) -> None:
+            state.queued_targets = ()
+
+        monkeypatch.setattr("batch.cli.sleep", stop_waiting)
+
+        _ = self._drive(_orchestrator(state, tmp_path, report=said.append))
+
+        assert said.count("#9 left alone (not-merged)") == 2
 
 
 def _planning_stack(
