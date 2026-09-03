@@ -10,6 +10,8 @@ from batch.testing.payloads import (
     client_over,
     issue,
     missing,
+    pull_request,
+    pull_requests,
     standalone,
     target,
     targets,
@@ -116,3 +118,14 @@ class TestTargets:
 
         with pytest.raises(RuntimeError, match="120 sub-issues, fetched 1"):
             _ = client_over(transport(response)).fetch_targets([EPIC])
+
+
+class TestClosingReferences:
+    def test_a_pull_request_closing_another_repo_s_issue_closes_nothing(self) -> None:
+        fake = transport(
+            pull_requests(pull_request(101, body="Fixes upstream/other#9"))
+        )
+
+        fetched = client_over(fake).fetch_pull_requests("issue-9")
+
+        assert [pull.closes for pull in fetched] == [()]

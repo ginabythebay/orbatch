@@ -254,13 +254,13 @@ def _rollup(node: _PullRequestNode) -> CiStatus:
     return _ROLLUP_STATES.get(rollup.state, CiStatus.PENDING)
 
 
-def _to_pull_request(node: _PullRequestNode) -> PullRequest:
+def _to_pull_request(node: _PullRequestNode, slug: str) -> PullRequest:
     return PullRequest(
         number=node.number,
         state=node.state,
         base=node.base_ref_name,
         created_at=node.created_at,
-        closes=closing_references(node.body),
+        closes=closing_references(node.body, slug),
         ci=_rollup(node),
     )
 
@@ -362,7 +362,8 @@ class BatchGitHub:
         )
         response = _PullRequestResponseData.model_validate(raw)
         return [
-            _to_pull_request(node) for node in response.repository.pull_requests.nodes
+            _to_pull_request(node, f"{owner}/{name}")
+            for node in response.repository.pull_requests.nodes
         ]
 
     def fetch_targets(self, numbers: Sequence[int]) -> list[Target]:
