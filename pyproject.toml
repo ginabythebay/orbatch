@@ -5,6 +5,7 @@ description = "Issue and batch tooling"
 readme = "README.md"
 requires-python = "==3.13.*"
 dependencies = [
+    "batch",
     "ghgql",
     "orbit",
     "review",
@@ -30,6 +31,7 @@ dev = [
 members = ["packages/*", "tools/*"]
 
 [tool.uv.sources]
+batch = { workspace = true }
 ghgql = { workspace = true }
 orbit = { workspace = true }
 review = { workspace = true }
@@ -67,13 +69,13 @@ pythonpath = ["."]
 # silently drop the slow tests. Local runs deselect them in conftest.py
 # (pytest_collection_modifyitems); pass --slow to include them.
 addopts = "--import-mode=importlib --dist worksteal"
-testpaths = ["tests", "packages/ghgql/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
+testpaths = ["tests", "packages/ghgql/tests", "tools/batch/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
 tmp_path_retention_policy = "failed"
 filterwarnings = [
     "error",
 ]
 markers = [
-    "slow: tests that build wheels, create isolated venvs, or boot full apps (e.g. the orbit TUI)",
+    "slow: tests that build wheels, create isolated venvs, or boot full apps (e.g. the orbit and batch TUIs)",
 ]
 
 [tool.ruff]

@@ -61,7 +61,7 @@ def test_no_member_declares_a_bare_scripts_table(path: Path) -> None:
 
 
 def test_the_workspace_declares_console_scripts() -> None:
-    assert set(_SCRIPTS) >= {"orbit", "review-diff", "review-html", "snippets"}
+    assert set(_SCRIPTS) >= {"batch", "orbit", "review-diff", "review-html", "snippets"}
 
 
 @pytest.mark.parametrize("target", _SCRIPTS.values(), ids=list(_SCRIPTS))

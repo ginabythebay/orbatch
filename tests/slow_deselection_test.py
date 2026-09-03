@@ -22,8 +22,14 @@ _ROOT: Final = Path(__file__).resolve().parents[1]
 
 _WORKFLOWS: Final = _ROOT / ".github" / "workflows"
 
+_TUI_SUITES: Final = ("tools/orbit/tests", "tools/batch/tests")
 
-def _collect(*args: str, ci: bool) -> str:
+
+def _tui_node(testpath: str) -> str:
+    return f"{testpath}/tui_test.py::"
+
+
+def _collect(*args: str, ci: bool, testpath: str = _TUI_SUITES[0]) -> str:
     env = {k: v for k, v in os.environ.items() if k not in ("CI", "PYTEST_ADDOPTS")}
     if ci:
         env["CI"] = "true"
@@ -37,7 +43,7 @@ def _collect(*args: str, ci: bool) -> str:
             "-p",
             "no:cacheprovider",
             "-o",
-            "testpaths=tools/orbit/tests",
+            f"testpaths={testpath}",
             *args,
         ],
         cwd=_ROOT,
@@ -50,50 +56,54 @@ def _collect(*args: str, ci: bool) -> str:
 
 
 @pytest.mark.slow
-def test_ci_collects_the_slow_tests() -> None:
-    out = _collect(ci=True)
-    assert "tui_test.py" in out
+@pytest.mark.parametrize("testpath", _TUI_SUITES)
+def test_ci_collects_the_slow_tests(testpath: str) -> None:
+    out = _collect(ci=True, testpath=testpath)
+    assert _tui_node(testpath) in out
     assert "deselected" not in out
 
 
 @pytest.mark.slow
-def test_local_run_deselects_the_slow_tests() -> None:
-    out = _collect(ci=False)
-    assert "tui_test.py" not in out
+@pytest.mark.parametrize("testpath", _TUI_SUITES)
+def test_local_run_deselects_the_slow_tests(testpath: str) -> None:
+    out = _collect(ci=False, testpath=testpath)
+    assert _tui_node(testpath) not in out
     assert "deselected" in out
 
 
 @pytest.mark.slow
-def test_local_slow_flag_restores_them() -> None:
-    out = _collect("--slow", ci=False)
-    assert "tui_test.py" in out
+@pytest.mark.parametrize("testpath", _TUI_SUITES)
+def test_local_slow_flag_restores_them(testpath: str) -> None:
+    out = _collect("--slow", ci=False, testpath=testpath)
+    assert _tui_node(testpath) in out
     assert "deselected" not in out
 
 
 @pytest.mark.slow
-def test_explicit_path_collects_the_slow_tests_it_names() -> None:
-    out = _collect("tools/orbit/tests/tui_test.py", ci=False)
-    assert "tui_test.py" in out
+@pytest.mark.parametrize("testpath", _TUI_SUITES)
+def test_explicit_path_collects_the_slow_tests_it_names(testpath: str) -> None:
+    out = _collect(f"{testpath}/tui_test.py", ci=False, testpath=testpath)
+    assert _tui_node(testpath) in out
     assert "deselected" not in out
 
 
 @pytest.mark.slow
 def test_marker_expression_selects_the_slow_tests() -> None:
     out = _collect("-m", "slow", ci=False)
-    assert "tui_test.py" in out
+    assert _tui_node(_TUI_SUITES[0]) in out
 
 
 @pytest.mark.slow
 def test_empty_marker_expression_is_the_full_suite() -> None:
     out = _collect("-m", "", ci=False)
-    assert "tui_test.py" in out
+    assert _tui_node(_TUI_SUITES[0]) in out
     assert "deselected" not in out
 
 
 @pytest.mark.slow
 def test_keyword_selection_reaches_the_slow_tests() -> None:
     out = _collect("-k", "test_loads_epics_on_start", ci=False)
-    assert "tui_test.py" in out
+    assert _tui_node(_TUI_SUITES[0]) in out
 
 
 def test_the_gate_workflow_runs_the_full_suite() -> None:

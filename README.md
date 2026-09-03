@@ -6,6 +6,7 @@ Issue and batch tooling.
 
 | Path | Console script | What it does |
 | --- | --- | --- |
+| `tools/batch` | `batch` | Drives agent VMs over a stack of issues |
 | `tools/orbit` | `orbit` | GitHub issue and epic management, CLI and TUI |
 | `tools/review` | `review-diff`, `review-html` | Fresh-eyes code review over a diff or PR |
 | `tools/snippets` | `snippets` | Per-epic activity and accomplishment rollups |
@@ -38,6 +39,12 @@ dev/lint
 `.orbit.toml` at the repo root names the current sprint milestone and the
 backlog. `orbit` discovers it through `git rev-parse --show-toplevel`, so
 commands work from any subdirectory.
+
+`batch.toml` at the root of the repo being driven names the seed image, the
+slug, the git author, the keychain item holding the guest token, and the five
+commands `batch` shells out to. It belongs to that repo, not to this one, so
+`batch --repo PATH` (or a working directory inside the checkout) is what
+locates it.
 
 `$XDG_CONFIG_HOME/orbatch/snippets.toml` (by default
 `~/.config/orbatch/snippets.toml`) lists the checkouts a `snippets` rollup
