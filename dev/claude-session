@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Prints the claude flags that put an issue's agent in that issue's own
+# session, or with --debug launches claude in it. Runs inside the VM: the
+# transcript's directory slug is the guest's path, not the host's.
+set -euo pipefail
+
+debug=""
+issue=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            debug=1
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            if [[ -n "$issue" ]]; then
+                break
+            fi
+            issue="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+    echo "usage: dev/claude-session <issue> [--debug] [-- claude flags...]" >&2
+    exit 1
+fi
+
+# This is the sole implementation of the session-uuid derivation, and
+# transcripts on disk are named by its output: change it and every existing
+# session is stranded.
+root="$PWD"
+while [[ ! -f "$root/batch.toml" && "$root" != "/" ]]; do
+    root=$(dirname "$root")
+done
+if [[ ! -f "$root/batch.toml" ]]; then
+    echo "dev/claude-session: no batch.toml at or above $PWD" >&2
+    exit 1
+fi
+
+# The PATH this runs under is bare, and /usr/bin/python3 is 3.9 on macOS,
+# so the slug is parsed here rather than with tomllib.
+slug=""
+in_repo=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*\[([^]]*)\] ]]; then
+        if [[ "${BASH_REMATCH[1]}" == "repo" ]]; then in_repo=1; else in_repo=""; fi
+    elif [[ -n "$in_repo" && "$line" =~ ^[[:space:]]*slug[[:space:]]*=[[:space:]]*(\"([^\"]*)\"|\'([^\']*)\')[[:space:]]*(#.*)?$ ]]; then
+        slug="${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+        break
+    fi
+done < "$root/batch.toml"
+
+if [[ -z "$slug" ]]; then
+    echo "dev/claude-session: $root/batch.toml has no [repo] slug" >&2
+    exit 1
+fi
+
+uuid=$(python3 -c '
+import sys, uuid
+
+print(uuid.uuid5(uuid.NAMESPACE_URL, f"https://github.com/{sys.argv[1]}/issues/{sys.argv[2]}"))
+' "$slug" "$issue")
+dir_slug=$(pwd | sed 's/[^a-zA-Z0-9]/-/g')
+transcript="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/${dir_slug}/${uuid}.jsonl"
+
+if [[ -f "$transcript" ]]; then
+    session_flags=(--resume "$uuid")
+else
+    session_flags=(--session-id "$uuid" -n "issue-${issue}")
+fi
+
+if [[ -z "$debug" ]]; then
+    printf '%s\n' "${session_flags[*]}"
+    exit 0
+fi
+
+if [[ -f "$transcript" ]]; then
+    exec claude "${session_flags[@]}" "$@"
+fi
+
+echo "No session for issue ${issue} in $(pwd)." >&2
+echo "Start one with: claude ${session_flags[*]} $*" >&2

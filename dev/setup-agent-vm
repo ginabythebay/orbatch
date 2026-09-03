@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Per-boot setup for the agent VM.
+#
+# Every tool (jq, ssh, gh, claude, uv and its managed interpreter) is baked into
+# the seed image `batch.toml` names, so this script does NO apt or network work.
+# It only handles what is necessarily per-boot / per-worktree: detaching the
+# masked .git mount, dropping in the host's current claude credentials, and
+# trusting the worktree directory.
+set -euo pipefail
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# Must run as root (or via sudo) to umount and write /root config.
+if [[ $EUID -ne 0 ]]; then
+  echo "Re-running with sudo…"
+  exec sudo "$0" "$@"
+fi
+
+# --- umount .git ---
+echo "Unmounting .git…"
+umount .git || true
+
+# --- user-level claude config ---
+# Detach vibe's default read-write mount of .claude.json so writes
+# stay on the VM disk and don't modify the host file.
+umount /root/.claude.json 2>/dev/null || true
+$SCRIPT_DIR/install-claude-config
+
+# --- trust ---
+$SCRIPT_DIR/trust-cwd
+
+# --- interpreter guard ---
+# Debian's python3.13 corrupts memory under GC-heavy loads, so uv must resolve
+# to the managed interpreter baked into the seed image. readlink resolves a
+# venv's bin/python through to the real interpreter, which is what makes a venv
+# built on the Debian binary visible here.
+py=$(uv python find 2>/dev/null || true)
+if [[ -z $py ]]; then
+  echo "ERROR: uv resolved no interpreter for requires-python" >&2
+  exit 1
+fi
+case "$(readlink -f "$py")" in
+  /usr/bin/*) echo "ERROR: using Debian python ($py)" >&2; exit 1 ;;
+esac
+
+echo "$0 Done."

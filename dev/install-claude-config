@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Copies the read-only claude-config mount into a writable home.
+#
+# Only .claude.json travels this way. ~/.claude is a shared mount — the host's
+# own directory, visible to every VM — so nothing here may write into it; a
+# headless session gets its settings via `claude --settings` instead.
+set -euo pipefail
+
+mount=${1:-/mnt/claude-config}
+home=${2:-/root}
+
+cp "$mount/.claude.json" "$home/.claude.json"

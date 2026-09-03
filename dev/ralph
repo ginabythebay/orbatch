@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+scratch=$(mktemp)
+trap 'rm -f "$scratch"' EXIT
+
+model_flag=()
+headless=""
+
+# Layered onto a headless session rather than installed in ~/.claude, which is
+# shared with the host and every other VM.
+settings_file="${CLAUDE_SETTINGS_FILE:-/mnt/claude-config/settings.json}"
+
+# Print mode with --output-format text emits nothing until the agent is done,
+# which leaves the orchestrator's per-issue log empty for the whole run.
+stream_filter='
+if .type == "assistant" then
+    (.message.content[]?
+     | if .type == "text" then .text
+       elif .type == "tool_use" then "· \(.name) \(.input | tostring | .[0:160])"
+       else empty end)
+elif .type == "result" then "── \(.subtype) after \((.duration_ms // 0) / 1000 | floor)s"
+else empty end'
+
+run_claude() {
+    local permission_flags=(--permission-mode acceptEdits)
+    local session_flags=()
+    # Recomputed per launch: phase 1 claims the session, phase 2 resumes it.
+    if [[ "$issue" =~ ^([0-9]+) ]]; then
+        read -ra session_flags <<< "$("$root/dev/claude-session" "${BASH_REMATCH[1]}")"
+    fi
+    if [ -n "${IS_SANDBOX:-}" ]; then
+        permission_flags=(--allow-dangerously-skip-permissions --dangerously-skip-permissions)
+    fi
+    if [[ -z "$headless" ]]; then
+        claude ${session_flags[@]+"${session_flags[@]}"} \
+            ${model_flag[@]+"${model_flag[@]}"} "${permission_flags[@]}" "$(cat "$1")"
+        return
+    fi
+    local settings_flag=()
+    if [[ -f "$settings_file" ]]; then
+        settings_flag=(--settings "$settings_file")
+    fi
+    claude -p --output-format stream-json --verbose \
+        ${session_flags[@]+"${session_flags[@]}"} ${model_flag[@]+"${model_flag[@]}"} \
+        "${permission_flags[@]}" ${settings_flag[@]+"${settings_flag[@]}"} \
+        "$(cat "$1")" | jq -r --unbuffered "$stream_filter"
+}
+
+# --- Gather inputs ---
+
+base="main"
+predecessors=""
+max_tests=""
+plan_guidance=""
+impl_only=""
+rework=""
+positional=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --impl-only)
+            impl_only=1
+            shift
+            ;;
+        --rework)
+            rework=1
+            shift
+            ;;
+        --headless)
+            headless=1
+            shift
+            ;;
+        --predecessors)
+            if [[ -z "${2:-}" ]]; then
+                echo "--predecessors requires a comma-separated issue list." >&2
+                exit 1
+            fi
+            predecessors="$2"
+            shift 2
+            ;;
+        --max-tests)
+            if [[ -z "${2:-}" ]]; then
+                echo "--max-tests requires a count." >&2
+                exit 1
+            fi
+            if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "--max-tests takes a non-negative count: $2" >&2
+                exit 1
+            fi
+            max_tests="$2"
+            shift 2
+            ;;
+        --plan-guidance)
+            if [[ -z "${2:-}" ]]; then
+                echo "--plan-guidance requires text to steer the plan phase." >&2
+                exit 1
+            fi
+            plan_guidance="$2"
+            shift 2
+            ;;
+        --base)
+            if [[ -z "${2:-}" ]]; then
+                echo "--base requires a branch name." >&2
+                exit 1
+            fi
+            # The templates write origin/{{BASE}}, so a ref here doubles the remote.
+            if [[ "$2" == origin/* ]]; then
+                echo "--base takes a branch name, not a ref: $2" >&2
+                exit 1
+            fi
+            base="$2"
+            shift 2
+            ;;
+        --model)
+            if [[ -z "${2:-}" ]]; then
+                echo "--model requires a model name." >&2
+                exit 1
+            fi
+            model_flag=(--model "$2")
+            shift 2
+            ;;
+        *)
+            positional+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- ${positional[@]+"${positional[@]}"}
+
+if [[ -n "${1:-}" ]]; then
+    issue="$1"
+else
+    read -rp "Issue (e.g. '180, PR A only'): " issue
+    if [[ -z "$issue" ]]; then
+        echo "Issue is required." >&2
+        exit 1
+    fi
+fi
+
+issue_number="$issue"
+if [[ "$issue" =~ ^([0-9]+) ]]; then
+    issue_number="${BASH_REMATCH[1]}"
+fi
+
+if [[ -n "$rework" && ( -n "$impl_only" || -n "${2:-}" ) ]]; then
+    echo "--rework addresses PR feedback; it takes no other mode and no guidance." >&2
+    exit 1
+fi
+
+if [[ -n "$impl_only" && -n "${2:-}" ]]; then
+    echo "--impl-only runs the test plan; it takes no guidance argument." >&2
+    exit 1
+fi
+
+if [[ ( -n "$max_tests" || -n "$plan_guidance" ) \
+    && ( -n "$impl_only" || -n "$rework" || -n "${2:-}" ) ]]; then
+    echo "--max-tests and --plan-guidance steer the plan phase; they take no" \
+        "other mode and no guidance argument." >&2
+    exit 1
+fi
+
+# The two-step flow waits for a keypress between the phases, which nobody is
+# there to press.
+if [[ -n "$headless" && -z "$impl_only" && -z "$rework" && -z "${2:-}" ]]; then
+    echo "--headless needs --impl-only, --rework, or test guidance." >&2
+    exit 1
+fi
+
+# An empty list must take the whole line with it, or the prompt asks the
+# agent to read the plans of no issues at all.
+if [[ -n "$predecessors" ]]; then
+    pred_expr="s|{{PREDECESSORS}}|${predecessors}|g"
+else
+    pred_expr="/{{PREDECESSORS}}/d"
+fi
+
+if [[ -n "$max_tests" ]]; then
+    if (( max_tests > 0 )); then
+        cap="Propose at most ${max_tests} test cases; cut the lowest-priority"
+        cap="${cap} behaviors first."
+    else
+        cap="Propose no test cases: the plan covers interface and design"
+        cap="${cap} decisions only."
+    fi
+    max_tests_expr="s|{{MAX_TESTS}}|${cap}|g"
+else
+    max_tests_expr="/{{MAX_TESTS}}/d"
+fi
+
+# Guidance reaches here verbatim from an issue body or a vwt prompt, so it must
+# be escaped before it becomes a sed replacement.
+escape_replacement() {
+    local text="${1//\\/\\\\}"
+    text="${text//|/\\|}"
+    printf '%s' "${text//&/\\&}"
+}
+
+if [[ -n "$plan_guidance" ]]; then
+    plan_guidance_expr="s|{{PLAN_GUIDANCE}}|$(escape_replacement "$plan_guidance")|g"
+else
+    plan_guidance_expr="/{{PLAN_GUIDANCE}}/d"
+fi
+
+# A section that is wrong for the other mode has to leave, not merely be
+# contradicted later in the prompt.
+if [[ -n "$headless" ]]; then
+    mode_expr=(-e '/{{#HEADLESS}}/d' -e '\|{{/HEADLESS}}|d'
+        -e '\|{{#INTERACTIVE}}|,\|{{/INTERACTIVE}}|d')
+else
+    mode_expr=(-e '\|{{#HEADLESS}}|,\|{{/HEADLESS}}|d' -e '/{{#INTERACTIVE}}/d'
+        -e '\|{{/INTERACTIVE}}|d')
+fi
+
+render() {
+    sed -e "s|{{ISSUE}}|${issue}|g" \
+        -e "s|{{ISSUE_NUMBER}}|${issue_number}|g" \
+        -e "s|{{BASE}}|${base}|g" \
+        -e "$pred_expr" \
+        -e "$max_tests_expr" \
+        -e "$plan_guidance_expr" \
+        "${mode_expr[@]}" \
+        "$@" > "$scratch"
+}
+
+if [[ -n "${2:-}" ]]; then
+    # One-step: custom test guidance.
+    render -e "s|{{TEST_GUIDANCE}}|$(escape_replacement "$2")|g" \
+        "$root/dev/ralph-task.md"
+    run_claude "$scratch"
+elif [[ -n "$rework" ]]; then
+    # The PR already exists; this session answers its review threads.
+    render "$root/dev/ralph-rework.md"
+    run_claude "$scratch"
+elif [[ -n "$impl_only" ]]; then
+    # The plan is already approved on the issue; skip phase 1 entirely.
+    render "$root/dev/ralph-impl.md"
+    run_claude "$scratch"
+else
+    # Two-step TDD
+    # Phase 1: plan
+    render "$root/dev/ralph-plan.md"
+    run_claude "$scratch"
+
+    echo ""
+    echo "Test plan written to issue #${issue} body."
+    read -rp "Review it, edit if needed, then press Enter to continue implementation... "
+
+    # Phase 2: implement. The session flags resume phase 1's session by ID, so
+    # the codebase exploration stays warm; ralph-impl.md re-reads the (possibly
+    # edited) Test Plan from the issue body, so human edits are still picked up.
+    render "$root/dev/ralph-impl.md"
+    run_claude "$scratch"
+fi
