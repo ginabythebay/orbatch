@@ -1389,6 +1389,12 @@ class TestWatchPassesWrapper:
         assert exit_code.value.code == 130
         assert orchestrator.report == said.append
 
+        state.on_fetch = None
+        said.clear()
+        _ = self._drive(orchestrator)
+
+        assert said == ["#9 left alone (not-merged)"]
+
     def test_a_line_repeated_within_one_pass_is_said_once(self, tmp_path: Path) -> None:
         said: list[str] = []
         orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
