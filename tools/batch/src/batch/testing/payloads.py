@@ -530,6 +530,8 @@ class FakeStack:
         )
 
     def remove(self, issue: int, *, force: bool = False) -> RemoveResult:
+        if not force:
+            self._refuse_if_unsafe(f"issue-{issue}")
         self.removed.append(issue)
         self.journal.append(f"remove #{issue}{' forced' if force else ''}")
         return RemoveResult(
@@ -539,20 +541,23 @@ class FakeStack:
             removed_disk=True,
         )
 
+    def _refuse_if_unsafe(self, branch: str) -> None:
+        if branch in self._dirty:
+            raise UnsafeRemovalError(
+                branch,
+                TeardownSkip.DIRTY_WORKTREE,
+                "the worktree has local changes",
+            )
+        if branch in self._unpushed:
+            raise UnsafeRemovalError(
+                branch,
+                TeardownSkip.UNPUSHED_COMMITS,
+                "the branch has unpushed commits",
+            )
+
     def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult:
         if not force:
-            if branch in self._dirty:
-                raise UnsafeRemovalError(
-                    branch,
-                    TeardownSkip.DIRTY_WORKTREE,
-                    "the worktree has local changes",
-                )
-            if branch in self._unpushed:
-                raise UnsafeRemovalError(
-                    branch,
-                    TeardownSkip.UNPUSHED_COMMITS,
-                    "the branch has unpushed commits",
-                )
+            self._refuse_if_unsafe(branch)
         self.removed_branches.append(branch)
         self.journal.append(f"remove {branch}{' forced' if force else ''}")
         present = branch not in self._absent and branch not in self._gone

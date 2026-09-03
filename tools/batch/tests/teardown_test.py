@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from batch.models import BatchIssue, BatchLabel, TeardownOutcome, TeardownSkip
+import pytest
+
+from batch.models import (
+    BatchIssue,
+    BatchLabel,
+    TeardownOutcome,
+    TeardownSkip,
+    UnsafeRemovalError,
+)
 from batch.teardown import Teardown
 from batch.testing.payloads import (
     EPIC,
@@ -108,6 +116,20 @@ class TestSafety:
         assert h.runner.cleaned == []
         assert h.journal == []
 
+    def test_an_unpushed_branch_skips_the_issue_whole(self, tmp_path: Path) -> None:
+        h = harness(
+            batch_issue(10, BatchLabel.READY_FOR_REVIEW),
+            root=tmp_path,
+            unpushed=("issue-10",),
+        )
+
+        result = h.core.sweep((EPIC,))
+
+        assert result.outcomes[0].skip is TeardownSkip.UNPUSHED_COMMITS
+        assert h.stack.removed == []
+        assert h.runner.cleaned == []
+        assert h.journal == []
+
     def test_a_live_vm_skips_the_issue_whole(self, tmp_path: Path) -> None:
         h = harness(
             batch_issue(10, BatchLabel.READY_FOR_REVIEW), root=tmp_path, live=(10,)
@@ -120,14 +142,31 @@ class TestSafety:
         assert h.runner.cleaned == []
         assert h.journal == []
 
-    def test_removal_is_forced_once_the_dirty_check_has_passed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_removal_goes_through_the_stack_safety_check(self, tmp_path: Path) -> None:
         h = harness(batch_issue(10, BatchLabel.READY_FOR_REVIEW), root=tmp_path)
 
         _ = h.core.sweep((EPIC,))
 
-        assert h.journal == ["remove #10 forced", "clean #10", "clear #10"]
+        assert h.journal == ["remove #10", "clean #10", "clear #10"]
+
+
+class TestFakeStackHonoursUnpushed:
+    def test_an_unforced_removal_raises(self, tmp_path: Path) -> None:
+        stack = FakeStack(tmp_path, unpushed=("issue-10",))
+
+        with pytest.raises(UnsafeRemovalError) as caught:
+            _ = stack.remove(10)
+
+        assert caught.value.skip is TeardownSkip.UNPUSHED_COMMITS
+        assert stack.removed == []
+        assert stack.journal == []
+
+    def test_a_forced_removal_still_goes_through(self, tmp_path: Path) -> None:
+        stack = FakeStack(tmp_path, unpushed=("issue-10",))
+
+        _ = stack.remove(10, force=True)
+
+        assert stack.removed == [10]
 
 
 class TestLabelAndConfigDir:
@@ -150,6 +189,17 @@ class TestLabelAndConfigDir:
             batch_issue(10, BatchLabel.READY_FOR_REVIEW),
             root=tmp_path,
             dirty=("issue-10",),
+        )
+
+        _ = h.core.sweep((EPIC,))
+
+        assert [issue.number for issue in h.state.finished((EPIC,))] == [10]
+
+    def test_an_unpushed_issue_keeps_its_batch_label(self, tmp_path: Path) -> None:
+        h = harness(
+            batch_issue(10, BatchLabel.READY_FOR_REVIEW),
+            root=tmp_path,
+            unpushed=("issue-10",),
         )
 
         _ = h.core.sweep((EPIC,))
