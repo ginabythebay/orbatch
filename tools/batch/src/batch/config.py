@@ -76,7 +76,7 @@ class BatchConfig:
     commands: Commands
 
     def issue_url(self, number: int) -> str:
-        """Feeds `batch.vm.session_uuid`, which `dev/claude-session` must match."""
+        """Feeds `batch.vm.session_uuid`, which `commands.session` must match."""
         return f"https://github.com/{self.slug}/issues/{number}"
 
 

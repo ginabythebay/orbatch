@@ -120,7 +120,7 @@ def debug_agent_command(
 
 
 def session_uuid(config: BatchConfig, issue: int) -> uuid.UUID:
-    """Matches `dev/claude-session`'s `uuid; no state file."""
+    """Matches the `uuid` `commands.session` derives; no state file."""
     return uuid.uuid5(uuid.NAMESPACE_URL, config.issue_url(issue))
 
 
@@ -397,7 +397,7 @@ class VmRunner:
 
     def write_config(self, config_dir: Path, *, headless: bool = False) -> None:
         """Stages what the VM mounts read-only: the login, the secrets, and for
-        a headless run the settings `dev/ralph` layers on with `--settings`.
+        a headless run the settings `commands.agent` layers on with `--settings`.
 
         The removal is the load-bearing half: a per-issue config dir outlives
         the run that made it, so a stale settings.json would silently restrict
@@ -444,8 +444,8 @@ class VmRunner:
         the master exits, and a console started attached never had one, so the
         vibe process naming the slot's disk is the only trace it leaves.
 
-        Exit carries no code and means only "stopped" — see
-        docs/adr/0008-completion-is-verified-not-reported.md.
+        Exit carries no code and means only "stopped": whether the work is
+        done is read from the pull request, never from the guest.
         """
         socket = self._root / f"{branch}.sock"
         if socket.exists():

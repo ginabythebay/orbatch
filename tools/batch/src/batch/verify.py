@@ -12,8 +12,8 @@ _TERMINAL = frozenset({Problem.NO_PR, Problem.PR_CLOSED})
 
 
 class Verifier:
-    """The only verdict on whether an issue is done; see
-    docs/adr/0008-completion-is-verified-not-reported.md."""
+    """The only verdict on whether an issue is done: an agent's own report of
+    success is not evidence, the state of its pull request is."""
 
     def __init__(
         self,
