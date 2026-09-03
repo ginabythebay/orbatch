@@ -121,11 +121,14 @@ class TestTargets:
 
 
 class TestClosingReferences:
-    def test_a_pull_request_closing_another_repo_s_issue_closes_nothing(self) -> None:
+    def test_only_a_reference_qualified_with_the_queried_repo_closes(self) -> None:
         fake = transport(
-            pull_requests(pull_request(101, body="Fixes upstream/other#9"))
+            pull_requests(
+                pull_request(101, body="Fixes upstream/other#9"),
+                pull_request(102, body="Fixes acme/widgets#9"),
+            )
         )
 
         fetched = client_over(fake).fetch_pull_requests("issue-9")
 
-        assert [pull.closes for pull in fetched] == [()]
+        assert [pull.closes for pull in fetched] == [(), (9,)]
