@@ -1,0 +1,15 @@
+[vm]
+seed_image = "~/.cache/vibe/prebaked_figaro.raw"
+
+[repo]
+slug = "ginabythebay/orbatch"
+author_name = "Gina White"
+author_email = "ginabythebay@users.noreply.github.com"
+github_token_item = "vibe-gh-token-ginabythebay"
+
+[commands]
+cli = "batch"
+setup = "dev/setup-agent-vm"
+session = "dev/claude-session"
+agent = "dev/ralph"
+plan_batch = "dev/ralph-plan-batch"

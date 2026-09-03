@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Add the current directory as a trusted project in ~/.claude.json
+
+set -euo pipefail
+
+CLAUDE_JSON="$HOME/.claude.json"
+DIR="$(pwd)"
+
+if [ ! -f "$CLAUDE_JSON" ]; then
+    echo "error: $CLAUDE_JSON not found" >&2
+    exit 1
+fi
+
+trust() {
+    local dir="$1"
+    if jq -e --arg dir "$dir" '.projects[$dir]' "$CLAUDE_JSON" > /dev/null 2>&1; then
+        echo "$dir already has a project entry in $CLAUDE_JSON"
+        return 0
+    fi
+    jq --arg dir "$dir" '.projects[$dir] = {
+        "allowedTools": [],
+        "mcpContextUris": [],
+        "mcpServers": {},
+        "enabledMcpjsonServers": [],
+        "disabledMcpjsonServers": [],
+        "hasTrustDialogAccepted": true,
+        "projectOnboardingSeenCount": 0,
+        "hasClaudeMdExternalIncludesApproved": false,
+        "hasClaudeMdExternalIncludesWarningShown": false,
+        "lastGracefulShutdown": false,
+        "hasCompletedProjectOnboarding": true
+    }' "$CLAUDE_JSON" > "$CLAUDE_JSON.tmp" && mv "$CLAUDE_JSON.tmp" "$CLAUDE_JSON"
+    echo "added $dir as trusted project in $CLAUDE_JSON"
+}
+
+trust "$DIR"
+
+# In a worktree, claude keys the project by the main checkout, so trusting
+# only the worktree still raises the trust dialog.
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+if [ -n "$common" ]; then
+    main_repo=$(dirname "$common")
+    if [ "$main_repo" != "$DIR" ]; then
+        trust "$main_repo"
+    fi
+fi

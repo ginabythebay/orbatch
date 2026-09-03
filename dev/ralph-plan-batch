@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+scratch=$(mktemp)
+trap 'rm -f "$scratch"' EXIT
+
+model_flag=()
+targets=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model)
+            if [[ -z "${2:-}" ]]; then
+                echo "--model requires a model name." >&2
+                exit 1
+            fi
+            model_flag=(--model "$2")
+            shift 2
+            ;;
+        *)
+            if [[ ! "$1" =~ ^[0-9]+$ ]]; then
+                echo "dev/ralph-plan-batch takes target numbers: $1" >&2
+                exit 1
+            fi
+            targets+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#targets[@]} -eq 0 ]]; then
+    echo "dev/ralph-plan-batch needs at least one epic or issue number." >&2
+    exit 1
+fi
+
+targets_args="${targets[*]}"
+targets_prose="#${targets[0]}"
+for target in "${targets[@]:1}"; do
+    targets_prose+=", #${target}"
+done
+
+permission_flags=(--permission-mode acceptEdits)
+if [ -n "${IS_SANDBOX:-}" ]; then
+    permission_flags=(--allow-dangerously-skip-permissions --dangerously-skip-permissions)
+fi
+
+sed -e "s|{{TARGETS_ARGS}}|${targets_args}|g" \
+    -e "s|{{TARGETS}}|${targets_prose}|g" \
+    "$root/dev/ralph-plan-batch.md" > "$scratch"
+
+claude ${model_flag[@]+"${model_flag[@]}"} "${permission_flags[@]}" "$(cat "$scratch")"
