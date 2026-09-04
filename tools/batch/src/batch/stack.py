@@ -236,16 +236,27 @@ class StackManager:
         finally:
             staging.unlink(missing_ok=True)
 
-    def remove(self, issue: int, *, force: bool = False) -> RemoveResult:
-        return self.remove_branch(f"issue-{issue}", force=force)
+    def remove(
+        self, issue: int, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult:
+        return self.remove_branch(
+            f"issue-{issue}", force=force, merged_base=merged_base
+        )
 
-    def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult:
+    def remove_branch(
+        self, branch: str, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult:
+        """`merged_base` is the base a caller has already established the branch
+        merged into; it relaxes the unpushed refusal to patch identity, so a
+        squash-landed branch is removable once its remote ref is gone."""
         worktree = self._worktree_root / branch
         disk = self._worktree_root / f"{branch}.raw"
         registered = worktree.resolve() in self._worktrees()
         present = registered and worktree.is_dir()
         if not force:
-            self._refuse_if_unsafe(branch, worktree if present else None)
+            self._refuse_if_unsafe(
+                branch, worktree if present else None, merged_base=merged_base
+            )
         if present:
             _ = self._git("worktree", "remove", "--force", str(worktree))
         elif registered:
@@ -303,15 +314,39 @@ class StackManager:
             return False
         return bool(self._git("rev-list", branch, "--not", "--remotes"))
 
-    def _refuse_if_unsafe(self, branch: str, worktree: Path | None) -> None:
+    def patch_unique(self, branch: str, base: str) -> bool | None:
+        """True when the branch carries a commit whose patch is not already in
+        `base`, so a squash of it onto `base` reads as carrying nothing.
+
+        False for a branch that does not exist, matching `unpushed`. None when
+        `base` does not resolve, which is no answer at all: a caller weighing
+        safety must fall back to `unpushed`.
+        """
+        if not self._branch_exists(branch):
+            return False
+        cherry = self._run("cherry", base, branch, check=False)
+        if cherry.returncode != 0:
+            return None
+        return any(line.startswith("+") for line in cherry.stdout.splitlines())
+
+    def _refuse_if_unsafe(
+        self, branch: str, worktree: Path | None, *, merged_base: str | None = None
+    ) -> None:
         if worktree is not None and self._dirty_at(worktree):
             raise UnsafeRemovalError(
                 branch, TeardownSkip.DIRTY_WORKTREE, "the worktree has local changes"
             )
-        if self.unpushed(branch):
+        if self._retains_work(branch, merged_base):
             raise UnsafeRemovalError(
                 branch, TeardownSkip.UNPUSHED_COMMITS, "the branch has unpushed commits"
             )
+
+    def _retains_work(self, branch: str, merged_base: str | None) -> bool:
+        if merged_base is not None:
+            unique = self.patch_unique(branch, merged_base)
+            if unique is not None:
+                return unique
+        return self.unpushed(branch)
 
     def _alignment(self, branch: str, base: str) -> Alignment:
         if (

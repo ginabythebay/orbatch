@@ -41,6 +41,33 @@ class Scratch:
     def checkout(self, ref: str) -> None:
         _ = git(self.repo, "checkout", "-q", ref)
 
+    def commit_file(self, tree: Path, path: str, text: str, message: str) -> str:
+        _ = (tree / path).write_text(text)
+        _ = git(tree, "add", path)
+        _ = git(tree, "commit", "-q", "-m", message)
+        return git(tree, "rev-parse", "HEAD")
+
+    def push(self, branch: str, tree: Path | None = None) -> None:
+        _ = git(tree or self.repo, "push", "-q", "origin", branch)
+
+    def land(self, path: str, text: str, message: str) -> str:
+        """Commit `text` on main as a commit of its own and push it, as a squash
+        merge does: the same content, a different commit."""
+        tip = self.commit_file(self.repo, path, text, message)
+        self.push("main")
+        return tip
+
+    def merge(self, branch: str) -> str:
+        _ = git(self.repo, "merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
+        return self.tip("HEAD")
+
+    def forget_origin(self) -> None:
+        _ = git(self.repo, "remote", "remove", "origin")
+
+    def unpublish(self, branch: str) -> None:
+        _ = git(self.repo, "push", "-q", "origin", "--delete", branch)
+        _ = git(self.repo, "fetch", "-q", "-p")
+
     def orphan(self, name: str, message: str) -> str:
         _ = git(self.repo, "checkout", "-q", "--orphan", name)
         return self.commit(message)

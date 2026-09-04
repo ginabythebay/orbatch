@@ -459,6 +459,7 @@ class FakeStack:
         *,
         dirty: Sequence[str] = (),
         unpushed: Sequence[str] = (),
+        patch_unique: Sequence[str] = (),
         absent: Sequence[str] = (),
         slots: Sequence[str] = (),
         unmerged: Sequence[str] = (),
@@ -480,6 +481,8 @@ class FakeStack:
         self.journal: list[str] = [] if journal is None else journal
         self._dirty: set[str] = set(dirty)
         self._unpushed: set[str] = set(unpushed)
+        self._patch_unique: set[str] = set(patch_unique)
+        self.merged_bases: list[str | None] = []
         self._absent: set[str] = set(absent)
         self._slots: tuple[str, ...] = tuple(slots)
         self._unmerged: set[str] = set(unmerged)
@@ -529,9 +532,12 @@ class FakeStack:
             alignment=self.alignment,
         )
 
-    def remove(self, issue: int, *, force: bool = False) -> RemoveResult:
+    def remove(
+        self, issue: int, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult:
+        self.merged_bases.append(merged_base)
         if not force:
-            self._refuse_if_unsafe(f"issue-{issue}")
+            self._refuse_if_unsafe(f"issue-{issue}", merged_base)
         self.removed.append(issue)
         self.journal.append(f"remove #{issue}{' forced' if force else ''}")
         return RemoveResult(
@@ -541,23 +547,26 @@ class FakeStack:
             removed_disk=True,
         )
 
-    def _refuse_if_unsafe(self, branch: str) -> None:
+    def _refuse_if_unsafe(self, branch: str, merged_base: str | None = None) -> None:
         if branch in self._dirty:
             raise UnsafeRemovalError(
                 branch,
                 TeardownSkip.DIRTY_WORKTREE,
                 "the worktree has local changes",
             )
-        if branch in self._unpushed:
+        retained = self._patch_unique if merged_base is not None else self._unpushed
+        if branch in retained:
             raise UnsafeRemovalError(
                 branch,
                 TeardownSkip.UNPUSHED_COMMITS,
                 "the branch has unpushed commits",
             )
 
-    def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult:
+    def remove_branch(
+        self, branch: str, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult:
         if not force:
-            self._refuse_if_unsafe(branch)
+            self._refuse_if_unsafe(branch, merged_base)
         self.removed_branches.append(branch)
         self.journal.append(f"remove {branch}{' forced' if force else ''}")
         present = branch not in self._absent and branch not in self._gone

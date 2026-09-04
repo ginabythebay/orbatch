@@ -41,6 +41,7 @@ def harness(
     unmerged: tuple[BatchIssue, ...] = (),
     dirty: tuple[str, ...] = (),
     unpushed: tuple[str, ...] = (),
+    patch_unique: tuple[str, ...] = (),
     live: tuple[int, ...] = (),
 ) -> Harness:
     journal: list[str] = []
@@ -49,7 +50,13 @@ def harness(
         state.close(issue.number, merged=True)
     for issue in unmerged:
         state.close(issue.number)
-    stack = FakeStack(root, dirty=dirty, unpushed=unpushed, journal=journal)
+    stack = FakeStack(
+        root,
+        dirty=dirty,
+        unpushed=unpushed,
+        patch_unique=patch_unique,
+        journal=journal,
+    )
     polls = {issue.number: 0 for issue in (*merged_issues, *unmerged)}
     runner = FakeRunner(
         root, polls={**polls, **dict.fromkeys(live, 1)}, journal=journal
@@ -116,11 +123,36 @@ class TestSafety:
         assert h.runner.cleaned == []
         assert h.journal == []
 
-    def test_an_unpushed_branch_skips_the_issue_whole(self, tmp_path: Path) -> None:
+    def test_a_branch_carrying_its_own_landed_commits_is_torn_down(
+        self, tmp_path: Path
+    ) -> None:
         h = harness(
             batch_issue(10, BatchLabel.READY_FOR_REVIEW),
             root=tmp_path,
             unpushed=("issue-10",),
+        )
+
+        result = h.core.sweep((EPIC,))
+
+        assert result.cleaned == (10,)
+        assert h.stack.removed == [10]
+        assert h.runner.cleaned == [10]
+        assert h.state.finished((EPIC,)) == ()
+
+    def test_the_merged_base_reaches_the_removal(self, tmp_path: Path) -> None:
+        h = harness(batch_issue(10, BatchLabel.READY_FOR_REVIEW), root=tmp_path)
+
+        _ = h.core.sweep((EPIC,))
+
+        assert h.stack.merged_bases == ["origin/main"]
+
+    def test_a_commit_that_never_landed_skips_the_issue_whole(
+        self, tmp_path: Path
+    ) -> None:
+        h = harness(
+            batch_issue(10, BatchLabel.READY_FOR_REVIEW),
+            root=tmp_path,
+            patch_unique=("issue-10",),
         )
 
         result = h.core.sweep((EPIC,))
@@ -195,11 +227,11 @@ class TestLabelAndConfigDir:
 
         assert [issue.number for issue in h.state.finished((EPIC,))] == [10]
 
-    def test_an_unpushed_issue_keeps_its_batch_label(self, tmp_path: Path) -> None:
+    def test_an_unlanded_issue_keeps_its_batch_label(self, tmp_path: Path) -> None:
         h = harness(
             batch_issue(10, BatchLabel.READY_FOR_REVIEW),
             root=tmp_path,
-            unpushed=("issue-10",),
+            patch_unique=("issue-10",),
         )
 
         _ = h.core.sweep((EPIC,))
