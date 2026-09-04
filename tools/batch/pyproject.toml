@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 batch = "batch.cli:main"
+vwt = "batch.worktree:main"
 
 [build-system]
 requires = ["hatchling"]
