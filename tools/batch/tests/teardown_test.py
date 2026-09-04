@@ -12,6 +12,7 @@ from batch.models import (
     TeardownSkip,
     UnsafeRemovalError,
 )
+from batch.stack import StackManager
 from batch.teardown import Teardown
 from batch.testing.payloads import (
     EPIC,
@@ -22,6 +23,7 @@ from batch.testing.payloads import (
     batch_config,
     batch_issue,
 )
+from batch.testing.scratch import scratch
 from batch.vm import VmRunner
 
 
@@ -180,6 +182,30 @@ class TestSafety:
         _ = h.core.sweep((EPIC,))
 
         assert h.journal == ["remove #10", "clean #10", "clear #10"]
+
+
+class TestAgainstARealStack:
+    def test_a_squash_landed_slot_is_reclaimed(self, tmp_path: Path) -> None:
+        sc = scratch(tmp_path)
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(10, "main")
+        _ = sc.commit_file(slot.worktree, "feature.txt", "the work\n", "agent work")
+        sc.push("issue-10", slot.worktree)
+        _ = sc.land({"feature.txt": "the work\n"}, "agent work (#10)")
+        sc.unpublish("issue-10")
+        state = FakeState(batch_issue(10, BatchLabel.READY_FOR_REVIEW))
+        state.close(10, merged=True)
+
+        result = Teardown(
+            state,
+            manager,
+            FakeRunner(tmp_path, polls={10: 0}),
+            FakeVerifier(merged=(10,)),
+        ).sweep((EPIC,))
+
+        assert result.cleaned == (10,)
+        assert not slot.worktree.exists()
+        assert not slot.disk.exists()
 
 
 class TestFakeStackHonoursUnpushed:

@@ -324,10 +324,33 @@ class StackManager:
         """
         if not self._branch_exists(branch):
             return False
+        fork = self._run("merge-base", base, branch, check=False)
         cherry = self._run("cherry", base, branch, check=False)
-        if cherry.returncode != 0:
+        if fork.returncode != 0 or cherry.returncode != 0:
             return None
-        return any(line.startswith("+") for line in cherry.stdout.splitlines())
+        if not any(line.startswith("+") for line in cherry.stdout.splitlines()):
+            return False
+        return not self._landed_whole(fork.stdout.strip(), branch, base)
+
+    def _landed_whole(self, fork_point: str, branch: str, base: str) -> bool:
+        """Whether the branch's commits reached `base` collapsed into one, which
+        per-commit patch identity cannot see: a squash merge of more than one
+        commit matches none of them."""
+        whole = self._patch_ids(self._run("diff", f"{fork_point}..{branch}").stdout)
+        landed = self._patch_ids(
+            self._run("log", "--patch", "--no-color", f"{fork_point}..{base}").stdout
+        )
+        return bool(whole) and whole[0] in landed
+
+    def _patch_ids(self, patches: str) -> tuple[str, ...]:
+        listed = subprocess.run(
+            ["git", "-C", str(self._repo), "patch-id", "--stable"],
+            input=patches,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return tuple(line.split()[0] for line in listed.splitlines() if line)
 
     def _refuse_if_unsafe(
         self, branch: str, worktree: Path | None, *, merged_base: str | None = None
@@ -342,11 +365,14 @@ class StackManager:
             )
 
     def _retains_work(self, branch: str, merged_base: str | None) -> bool:
-        if merged_base is not None:
-            unique = self.patch_unique(branch, merged_base)
-            if unique is not None:
-                return unique
-        return self.unpushed(branch)
+        """`merged_base` narrows the refusal, never widens it: work is at risk
+        only when the branch is unpushed *and* carries a patch the base has not
+        already taken."""
+        if not self.unpushed(branch):
+            return False
+        if merged_base is None:
+            return True
+        return self.patch_unique(branch, merged_base) is not False
 
     def _alignment(self, branch: str, base: str) -> Alignment:
         if (

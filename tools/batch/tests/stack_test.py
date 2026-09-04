@@ -364,13 +364,11 @@ FEATURE_TEXT = "the work\n"
 
 
 def squash_landed(sc: Scratch, manager: StackManager) -> Slot:
-    """A slot whose commit reached main as a squash, with the remote branch
-    pruned and an unrelated commit landed after it."""
     slot = manager.ensure(9, "main")
     _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
     sc.push("issue-9", slot.worktree)
-    _ = sc.land(FEATURE, FEATURE_TEXT, "agent work (#9)")
-    _ = sc.land("other.txt", "elsewhere\n", "unrelated")
+    _ = sc.land({FEATURE: FEATURE_TEXT}, "agent work (#9)")
+    _ = sc.land({"other.txt": "elsewhere\n"}, "unrelated")
     sc.unpublish("issue-9")
     return slot
 
@@ -390,6 +388,54 @@ class TestRemoveAfterMerge:
         assert result.removed_worktree
         assert result.removed_branch
         assert result.removed_disk
+
+    def test_a_multi_commit_branch_landed_as_one_squash_is_removed(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        _ = sc.commit_file(slot.worktree, "notes.md", "why\n", "docs: notes")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.land({FEATURE: FEATURE_TEXT, "notes.md": "why\n"}, "agent work (#9)")
+        _ = sc.land({"other.txt": "elsewhere\n"}, "unrelated")
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_a_branch_pushed_but_absent_from_a_stale_base_is_removed(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.merge("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_a_branch_merged_into_a_predecessor_is_removed(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        earlier = manager.ensure(8, "main")
+        _ = sc.commit_file(earlier.worktree, "earlier.txt", "before\n", "issue 8")
+        sc.push("issue-8", earlier.worktree)
+        slot = manager.ensure(9, "issue-8")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.push("issue-9", slot.worktree)
+        _ = git(earlier.worktree, "merge", "-q", "--no-ff", "-m", "merge", "issue-9")
+        sc.push("issue-8", earlier.worktree)
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
 
     def test_the_same_branch_is_refused_without_a_merged_base(
         self, sc: Scratch
