@@ -44,7 +44,6 @@ class Slots(Protocol):
     def slot_names(self) -> tuple[str, ...]: ...
     def merged_into(self, branch: str, base: str) -> bool: ...
     def dirty(self, branch: str) -> bool: ...
-    def unpushed(self, branch: str) -> bool: ...
     def checked_out(self, branch: str) -> str | None: ...
     def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult: ...
 
@@ -117,7 +116,9 @@ class Reclaimer:
             return TeardownSkip.VM_LIVE
         if branch in occupied:
             return TeardownSkip.OCCUPIED
-        return self._unsafe(branch)
+        if self._stack.dirty(branch):
+            return TeardownSkip.DIRTY_WORKTREE
+        return None
 
     def _claimed(self, branch: str) -> bool:
         """Covers the window a process probe cannot: a slot claimed before its VM
@@ -132,10 +133,3 @@ class Reclaimer:
         if pid is not None:
             return self._alive(pid)
         return self._runner.status_branch(branch) is VmStatus.RUNNING
-
-    def _unsafe(self, branch: str) -> TeardownSkip | None:
-        if self._stack.dirty(branch):
-            return TeardownSkip.DIRTY_WORKTREE
-        if self._stack.unpushed(branch):
-            return TeardownSkip.UNPUSHED_COMMITS
-        return None

@@ -88,9 +88,6 @@ class CountingStack:
     def dirty(self, branch: str) -> bool:
         return self._inner.dirty(branch)
 
-    def unpushed(self, branch: str) -> bool:
-        return self._inner.unpushed(branch)
-
     def checked_out(self, branch: str) -> str | None:
         return self._inner.checked_out(branch)
 
@@ -152,7 +149,7 @@ class TestReclaim:
     def test_a_squash_landed_branch_main_has_merged_is_reclaimed(
         self, sc: Scratch
     ) -> None:
-        """`_unsafe` is only reached once the branch is an ancestor of `main`,
+        """Removal is only attempted once the branch is an ancestor of `main`,
         which is what puts its commits somewhere the removal cannot take them."""
         slot = manager(sc).ensure(9, "main")
         _ = sc.commit_file(slot.worktree, "feature.txt", "the work\n", "agent work")
@@ -177,7 +174,8 @@ class TestReclaim:
 
 
 class RacingStack:
-    """Selects clean, then refuses removal: the slot changed under the sweep."""
+    """Selects clean, then refuses an unforced removal: the slot changed under
+    the sweep. Forcing succeeds, as the real manager does."""
 
     def __init__(self, skip: TeardownSkip, root: Path) -> None:
         self._skip: TeardownSkip = skip
@@ -198,16 +196,18 @@ class RacingStack:
         del branch
         return False
 
-    def unpushed(self, branch: str) -> bool:
-        del branch
-        return False
-
     def checked_out(self, branch: str) -> str | None:
         return branch
 
     def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult:
-        del force
-        raise UnsafeRemovalError(branch, self._skip, "raced")
+        if not force:
+            raise UnsafeRemovalError(branch, self._skip, "raced")
+        return RemoveResult(
+            branch=branch,
+            removed_worktree=True,
+            removed_branch=True,
+            removed_disk=True,
+        )
 
 
 class TestRacedRemoval:
