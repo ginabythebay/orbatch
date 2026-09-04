@@ -9,6 +9,7 @@ from batch.models import (
     TeardownOutcome,
     TeardownResult,
     TeardownSkip,
+    UnsafeRemovalError,
     VmStatus,
 )
 
@@ -19,7 +20,6 @@ class Labels(Protocol):
 
 
 class Slots(Protocol):
-    def dirty(self, branch: str) -> bool: ...
     def remove(self, issue: int, *, force: bool = False) -> RemoveResult: ...
 
 
@@ -57,7 +57,10 @@ class Teardown:
         skip = self._refuse(issue_number)
         if skip is not None:
             return TeardownOutcome(number=issue_number, skip=skip)
-        _ = self._stack.remove(issue_number, force=True)
+        try:
+            _ = self._stack.remove(issue_number)
+        except UnsafeRemovalError as exc:
+            return TeardownOutcome(number=issue_number, skip=exc.skip)
         _ = self._runner.clean(issue_number)
         self._state.clear_state(issue_number)
         return TeardownOutcome(number=issue_number)
@@ -67,6 +70,4 @@ class Teardown:
             return TeardownSkip.NOT_MERGED
         if self._runner.status(issue_number) is VmStatus.RUNNING:
             return TeardownSkip.VM_LIVE
-        if self._stack.dirty(f"issue-{issue_number}"):
-            return TeardownSkip.DIRTY_WORKTREE
         return None

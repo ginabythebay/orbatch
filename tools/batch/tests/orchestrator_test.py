@@ -602,7 +602,7 @@ class TestTeardownDuringARun:
 
         assert not result.halted
         assert h.stack.removed == [10]
-        assert h.journal.index("remove #10 forced") < h.journal.index("launch #12")
+        assert h.journal.index("remove #10") < h.journal.index("launch #12")
         assert "#10 cleaned up" in h.reported
 
     def test_the_successor_of_a_merged_issue_is_cut_from_main(
