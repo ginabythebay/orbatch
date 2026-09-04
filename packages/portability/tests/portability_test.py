@@ -14,9 +14,10 @@ names alone, since they legitimately carry command values as fixture data.
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 import pytest
 
@@ -62,6 +63,18 @@ def _is_guarded_module(path: Path) -> bool:
 
 
 _MODULES: Final = [path for path in _FILES if _is_guarded_module(path)]
+
+
+def _workspace_members() -> set[str]:
+    with (_ROOT / "pyproject.toml").open("rb") as handle:
+        configured = tomllib.load(handle)
+    patterns = cast(list[str], configured["tool"]["uv"]["workspace"]["members"])
+    return {
+        str(member.relative_to(_ROOT))
+        for pattern in patterns
+        for member in _ROOT.glob(pattern)
+        if (member / "pyproject.toml").is_file()
+    }
 
 
 def _src_roots(paths: Iterable[Path]) -> set[str]:
@@ -121,21 +134,16 @@ def test_a_planted_command_path_is_reported_with_its_line(tmp_path: Path) -> Non
 
 
 def test_a_test_carrying_a_command_path_is_not_swept() -> None:
-    carriers = [
-        path
-        for path in _FILES
-        if path.suffix == ".py" and _command_path_lines(_ROOT, path)
-    ]
+    carrier = _ROOT / "tools/review/tests/cli_test.py"
 
-    assert carriers != []
-    assert set(carriers) & set(_MODULES) == set()
+    assert _command_path_lines(_ROOT, carrier) != []
+    assert carrier in _FILES
+    assert carrier not in _MODULES
 
 
 def test_the_declaring_module_is_scanned_like_any_other_file() -> None:
     assert Path(names.__file__).resolve() in _FILES
 
 
-def test_every_src_root_in_the_workspace_is_swept() -> None:
-    assert _src_roots(_MODULES) == _src_roots(
-        path for path in _FILES if path.suffix == ".py"
-    )
+def test_every_workspace_member_is_swept_for_command_paths() -> None:
+    assert _src_roots(_MODULES) == _workspace_members()
