@@ -94,3 +94,36 @@ two nodes; confirmed by mutating the slug order (test fails) and restoring.
 Notes for next iteration: `#9` (from `#2`'s review) still open. Bare `#n` is
 still slug-agnostic by design, so client-level tests using bare references
 pin nothing about the slug — the qualified-body case is the only guard.
+
+## 2026-09-03 — issue #5 _watch_passes must not stack _QuietRepeats
+
+https://github.com/ginabythebay/orbatch/issues/5
+
+Decisions:
+- Took the issue's design: `_watch_passes` saves `orchestrator.report` before
+  wrapping and restores it in a `finally`, so wrapper depth stays at one on
+  the normal return and on the KeyboardInterrupt -> SystemExit(130) route.
+- Tests drive `_watch_passes` directly (private import with a one-line pyright
+  ignore, not a file-wide `reportPrivateUsage=false`).
+- Fixture for a line that repeats: a closed-unmerged `#9` in `FakeState.closed`
+  makes every sweep report "#9 left alone (not-merged)". `run()` sweeps twice
+  per pass, so one call exercises the dedupe and two calls the stacking bug.
+- Case 5 needs `show` to fire, and `watch()` only calls it when the pass has
+  outcomes — hence the extra `batch_issue(10)` alongside the queued target.
+- Interrupt injected via `FakeState.on_fetch`, which raises inside `state.batch`
+  under the `try`, so a trailing restore statement would not pass.
+
+Files: tools/batch/src/batch/cli.py,
+tools/batch/tests/cli_test.py (new `TestWatchPassesWrapper`, 5 cases).
+
+Review: one merged finding (conventions lens) — the two
+`orchestrator.report == said.append` assertions mirror the diff; drop them.
+Declined the deletion: those are cases 2 and 3 of the issue's own test plan.
+Fixed the real half — the interrupt case now drives a second pass afterwards
+and asserts the refusal line is narrated again (verified red without the
+`finally`). Correctness and tests lenses: no findings.
+
+Notes for next iteration: `#9` (from `#2`'s review) still open. Pre-existing
+and unfixed: `watch()` only calls `report` on passes with outcomes, so during
+a long idle streak `_QuietRepeats` never resets and refusals are said once for
+the whole streak, not once per pass as its docstring claims.

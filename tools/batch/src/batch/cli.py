@@ -766,7 +766,8 @@ def _watch_passes(
 ) -> RunResult:
     """`echo` is off under the dashboard, which renders the passes itself; the
     wait goes through `report`, which the dashboard buffers as narration."""
-    quiet = _QuietRepeats(orchestrator.report)
+    original = orchestrator.report
+    quiet = _QuietRepeats(original)
     orchestrator.report = quiet
 
     def show(one_pass: RunResult) -> None:
@@ -787,6 +788,8 @@ def _watch_passes(
         )
     except KeyboardInterrupt:
         raise SystemExit(130) from None
+    finally:
+        orchestrator.report = original
 
 
 @cli.command()
