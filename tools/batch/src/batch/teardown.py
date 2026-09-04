@@ -12,6 +12,7 @@ from batch.models import (
     UnsafeRemovalError,
     VmStatus,
 )
+from batch.order import ORIGIN_MAIN
 
 
 class Labels(Protocol):
@@ -20,7 +21,9 @@ class Labels(Protocol):
 
 
 class Slots(Protocol):
-    def remove(self, issue: int, *, force: bool = False) -> RemoveResult: ...
+    def remove(
+        self, issue: int, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult: ...
 
 
 class Configs(Protocol):
@@ -40,12 +43,19 @@ class Teardown:
     """
 
     def __init__(
-        self, state: Labels, stack: Slots, runner: Configs, merges: Merges
+        self,
+        state: Labels,
+        stack: Slots,
+        runner: Configs,
+        merges: Merges,
+        *,
+        base: str = ORIGIN_MAIN,
     ) -> None:
         self._state: Labels = state
         self._stack: Slots = stack
         self._runner: Configs = runner
         self._merges: Merges = merges
+        self._base: str = base
 
     def sweep(self, targets: Sequence[int]) -> TeardownResult:
         outcomes = [
@@ -58,7 +68,7 @@ class Teardown:
         if skip is not None:
             return TeardownOutcome(number=issue_number, skip=skip)
         try:
-            _ = self._stack.remove(issue_number)
+            _ = self._stack.remove(issue_number, merged_base=self._base)
         except UnsafeRemovalError as exc:
             return TeardownOutcome(number=issue_number, skip=exc.skip)
         _ = self._runner.clean(issue_number)

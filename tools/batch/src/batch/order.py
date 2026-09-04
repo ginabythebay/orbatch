@@ -3,6 +3,7 @@ from __future__ import annotations
 from batch.models import Batch, BatchIssue, BatchLabel
 
 MAIN = "main"
+ORIGIN_MAIN = f"origin/{MAIN}"
 UNSTARTED = frozenset({BatchLabel.QUEUED, BatchLabel.PLANNED})
 
 
