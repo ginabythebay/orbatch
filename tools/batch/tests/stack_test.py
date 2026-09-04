@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from batch import stack
-from batch.models import Alignment, StaleSlotError, UnsafeRemovalError
+from batch.models import (
+    Alignment,
+    Slot,
+    StaleSlotError,
+    TeardownSkip,
+    UnsafeRemovalError,
+)
 from batch.stack import StackManager, main_repo
 from batch.testing.scratch import SEED_CONTENT, TRACKED_FILE, Scratch, git, scratch
 
@@ -335,6 +341,28 @@ class TestRemove:
 
         assert manager.unpushed("issue-9") is True
 
+    def test_a_commit_only_this_branch_holds_is_flagged(self, sc: Scratch) -> None:
+        """Another branch's own unpushed work does not excuse this branch's."""
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        sibling = manager.ensure_branch("sibling", "main")
+        _ = git(sibling.worktree, "commit", "-q", "--allow-empty", "-m", "elsewhere")
+        slot = manager.ensure(9, "main")
+        _ = git(slot.worktree, "commit", "-q", "--allow-empty", "-m", "agent work")
+
+        assert manager.unpushed("issue-9") is True
+
+    def test_a_commit_a_sibling_local_branch_holds_is_not_flagged(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        sc.branch_at("sibling", "main")
+        sc.checkout("sibling")
+        _ = sc.commit("local work")
+
+        _ = manager.ensure_branch("fix-thing", "sibling")
+
+        assert manager.unpushed("fix-thing") is False
+
     def test_a_branch_that_does_not_exist_has_nothing_unpushed(
         self, sc: Scratch
     ) -> None:
@@ -351,6 +379,198 @@ class TestRemove:
         assert slot.worktree.is_dir()
         assert slot.disk.exists()
         assert sc.tip("issue-9")
+
+
+FEATURE = "feature.txt"
+FEATURE_TEXT = "the work\n"
+
+
+def squash_landed(sc: Scratch, manager: StackManager) -> Slot:
+    slot = manager.ensure(9, "main")
+    _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+    sc.push("issue-9", slot.worktree)
+    _ = sc.land({FEATURE: FEATURE_TEXT}, "agent work (#9)")
+    _ = sc.land({"other.txt": "elsewhere\n"}, "unrelated")
+    sc.unpublish("issue-9")
+    return slot
+
+
+class TestRemoveAfterMerge:
+    def test_a_squash_landed_branch_with_no_remote_ref_is_removed(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = squash_landed(sc, manager)
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert not slot.disk.exists()
+        assert "issue-9" not in git(sc.repo, "branch", "--format=%(refname:short)")
+        assert result.removed_worktree
+        assert result.removed_branch
+        assert result.removed_disk
+
+    def test_a_multi_commit_squash_survives_an_external_diff_driver(
+        self, sc: Scratch
+    ) -> None:
+        _ = git(sc.repo, "config", "diff.external", "false")
+        _ = git(sc.repo, "config", "format.pretty", "oneline")
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        _ = sc.commit_file(slot.worktree, "notes.md", "why\n", "docs: notes")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.land({FEATURE: FEATURE_TEXT, "notes.md": "why\n"}, "agent work (#9)")
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_a_multi_commit_branch_landed_as_one_squash_is_removed(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        _ = sc.commit_file(slot.worktree, "notes.md", "why\n", "docs: notes")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.land({FEATURE: FEATURE_TEXT, "notes.md": "why\n"}, "agent work (#9)")
+        _ = sc.land({"other.txt": "elsewhere\n"}, "unrelated")
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_a_branch_pushed_but_absent_from_a_stale_base_is_removed(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.merge("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_a_branch_merged_into_a_predecessor_is_removed(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        earlier = manager.ensure(8, "main")
+        _ = sc.commit_file(earlier.worktree, "earlier.txt", "before\n", "issue 8")
+        sc.push("issue-8", earlier.worktree)
+        slot = manager.ensure(9, "issue-8")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.push("issue-9", slot.worktree)
+        _ = git(earlier.worktree, "merge", "-q", "--no-ff", "-m", "merge", "issue-9")
+        sc.push("issue-8", earlier.worktree)
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_the_same_branch_is_refused_without_a_merged_base(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = squash_landed(sc, manager)
+
+        with pytest.raises(UnsafeRemovalError) as caught:
+            _ = manager.remove(9)
+
+        assert caught.value.skip is TeardownSkip.UNPUSHED_COMMITS
+        assert slot.worktree.is_dir()
+        assert sc.tip("issue-9")
+
+    def test_a_commit_that_never_landed_is_still_refused(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = squash_landed(sc, manager)
+        _ = sc.commit_file(slot.worktree, "extra.txt", "unsent\n", "rework")
+
+        with pytest.raises(UnsafeRemovalError) as caught:
+            _ = manager.remove(9, merged_base="origin/main")
+
+        assert caught.value.skip is TeardownSkip.UNPUSHED_COMMITS
+        assert slot.worktree.is_dir()
+        assert slot.disk.exists()
+        assert sc.tip("issue-9")
+
+    def test_a_dirty_worktree_is_still_refused(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = squash_landed(sc, manager)
+        _ = (slot.worktree / "notes.txt").write_text("unsaved")
+
+        with pytest.raises(UnsafeRemovalError) as caught:
+            _ = manager.remove(9, merged_base="origin/main")
+
+        assert caught.value.skip is TeardownSkip.DIRTY_WORKTREE
+        assert slot.worktree.is_dir()
+        assert slot.disk.exists()
+
+    def test_a_merge_commit_landing_is_removed(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.merge("issue-9")
+        sc.push("main")
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
+    def test_a_base_that_does_not_resolve_keeps_the_strict_refusal(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.forget_origin()
+
+        with pytest.raises(UnsafeRemovalError) as caught:
+            _ = manager.remove(9, merged_base="origin/main")
+
+        assert caught.value.skip is TeardownSkip.UNPUSHED_COMMITS
+        assert slot.worktree.is_dir()
+        assert sc.tip("issue-9")
+
+
+class TestPatchUnique:
+    def test_a_squash_landed_commit_is_not_unique(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        _ = squash_landed(sc, manager)
+
+        assert manager.patch_unique("issue-9", "origin/main") is False
+
+    def test_a_local_only_commit_is_unique(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = squash_landed(sc, manager)
+        _ = sc.commit_file(slot.worktree, "extra.txt", "unsent\n", "rework")
+
+        assert manager.patch_unique("issue-9", "origin/main") is True
+
+    def test_a_base_that_does_not_resolve_answers_nothing(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.forget_origin()
+
+        assert manager.patch_unique("issue-9", "origin/main") is None
+
+    def test_a_branch_that_does_not_exist_carries_nothing(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+
+        assert manager.patch_unique("plan-9", "origin/main") is False
 
 
 def _registered_worktrees(sc: Scratch) -> set[Path]:

@@ -617,6 +617,20 @@ class TestStack:
         assert "local changes" in result.output
         assert slot.worktree.is_dir()
 
+    def test_a_squash_landed_branch_is_still_refused(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, "feature.txt", "the work\n", "agent work")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.land({"feature.txt": "the work\n"}, "agent work (#9)")
+        sc.unpublish("issue-9")
+
+        result = CliRunner().invoke(cli, ["stack", "remove", "9"], obj=manager)
+
+        assert result.exit_code != 0
+        assert "unpushed commits" in result.output
+        assert slot.worktree.is_dir()
+
     def test_force_removes_what_the_check_refused(self, sc: Scratch) -> None:
         manager = StackManager(sc.repo, seed_image=sc.seed)
         slot = manager.ensure(9, "main")

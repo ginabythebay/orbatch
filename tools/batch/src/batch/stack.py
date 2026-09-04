@@ -236,16 +236,27 @@ class StackManager:
         finally:
             staging.unlink(missing_ok=True)
 
-    def remove(self, issue: int, *, force: bool = False) -> RemoveResult:
-        return self.remove_branch(f"issue-{issue}", force=force)
+    def remove(
+        self, issue: int, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult:
+        return self.remove_branch(
+            f"issue-{issue}", force=force, merged_base=merged_base
+        )
 
-    def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult:
+    def remove_branch(
+        self, branch: str, *, force: bool = False, merged_base: str | None = None
+    ) -> RemoveResult:
+        """`merged_base` is the base a caller has already established the branch
+        merged into; it relaxes the unpushed refusal to patch identity, so a
+        squash-landed branch is removable once its remote ref is gone."""
         worktree = self._worktree_root / branch
         disk = self._worktree_root / f"{branch}.raw"
         registered = worktree.resolve() in self._worktrees()
         present = registered and worktree.is_dir()
         if not force:
-            self._refuse_if_unsafe(branch, worktree if present else None)
+            self._refuse_if_unsafe(
+                branch, worktree if present else None, merged_base=merged_base
+            )
         if present:
             _ = self._git("worktree", "remove", "--force", str(worktree))
         elif registered:
@@ -298,20 +309,106 @@ class StackManager:
         ).stdout.strip()
 
     def unpushed(self, branch: str) -> bool:
-        """False for a branch that does not exist: nothing local is at risk."""
+        """False for a branch that does not exist: nothing local is at risk.
+
+        Commits another local branch also holds came from whatever the branch
+        was cut on top of, so deleting this branch cannot destroy them.
+        """
         if not self._branch_exists(branch):
             return False
-        return bool(self._git("rev-list", branch, "--not", "--remotes"))
+        return bool(
+            self._git(
+                "rev-list",
+                branch,
+                "--not",
+                "--remotes",
+                "--exclude",
+                branch,
+                "--branches",
+            )
+        )
 
-    def _refuse_if_unsafe(self, branch: str, worktree: Path | None) -> None:
+    def patch_unique(self, branch: str, base: str) -> bool | None:
+        """True when the branch carries a commit whose patch is not already in
+        `base`, so a squash of it onto `base` reads as carrying nothing.
+
+        False for a branch that does not exist, matching `unpushed`. None when
+        the two cannot be compared at all — no such base, no shared history, a
+        git that would not answer — which is no answer at all: a caller weighing
+        safety must fall back to `unpushed`.
+        """
+        if not self._branch_exists(branch):
+            return False
+        fork = self._run("merge-base", base, branch, check=False)
+        cherry = self._run("cherry", base, branch, check=False)
+        if fork.returncode != 0 or cherry.returncode != 0:
+            return None
+        if not any(line.startswith("+") for line in cherry.stdout.splitlines()):
+            return False
+        landed = self._landed_whole(fork.stdout.strip(), branch, base)
+        return None if landed is None else not landed
+
+    def _landed_whole(self, fork_point: str, branch: str, base: str) -> bool | None:
+        """Whether the branch's commits reached `base` collapsed into one, which
+        per-commit patch identity cannot see: a squash merge of more than one
+        commit matches none of them.
+
+        The flags pin porcelain output to a form `git patch-id` can read: these
+        tools run in whatever repo the user is in, and an external diff driver
+        or a configured pretty format would otherwise answer for git.
+        """
+        whole = self._run(
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            f"{fork_point}..{branch}",
+            check=False,
+        )
+        history = self._run(
+            "log",
+            "--patch",
+            "--no-ext-diff",
+            "--no-color",
+            "--pretty=medium",
+            f"{fork_point}..{base}",
+            check=False,
+        )
+        if whole.returncode != 0 or history.returncode != 0:
+            return None
+        ids = self._patch_ids(whole.stdout)
+        return bool(ids) and ids[0] in self._patch_ids(history.stdout)
+
+    def _patch_ids(self, patches: str) -> tuple[str, ...]:
+        listed = subprocess.run(
+            ["git", "-C", str(self._repo), "patch-id", "--stable"],
+            input=patches,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return tuple(line.split()[0] for line in listed.splitlines() if line)
+
+    def _refuse_if_unsafe(
+        self, branch: str, worktree: Path | None, *, merged_base: str | None = None
+    ) -> None:
         if worktree is not None and self._dirty_at(worktree):
             raise UnsafeRemovalError(
                 branch, TeardownSkip.DIRTY_WORKTREE, "the worktree has local changes"
             )
-        if self.unpushed(branch):
+        if self._retains_work(branch, merged_base):
             raise UnsafeRemovalError(
                 branch, TeardownSkip.UNPUSHED_COMMITS, "the branch has unpushed commits"
             )
+
+    def _retains_work(self, branch: str, merged_base: str | None) -> bool:
+        """`merged_base` narrows the refusal, never widens it: work is at risk
+        only when the branch is unpushed *and* carries a patch the base has not
+        already taken."""
+        if not self.unpushed(branch):
+            return False
+        if merged_base is None:
+            return True
+        return self.patch_unique(branch, merged_base) is not False
 
     def _alignment(self, branch: str, base: str) -> Alignment:
         if (

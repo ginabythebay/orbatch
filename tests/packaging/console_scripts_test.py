@@ -20,7 +20,7 @@ _PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
 
 # `python -m <package>` runs whichever entry point that package's __main__
 # picks, so a package declaring a second script names its own module here.
-_MODULE_FORM: Final = {"review-html": "review.html"}
+_MODULE_FORM: Final = {"review-html": "review.html", "vwt": "batch.worktree"}
 
 
 def _load(path: Path) -> dict[str, object]:
@@ -61,7 +61,14 @@ def test_no_member_declares_a_bare_scripts_table(path: Path) -> None:
 
 
 def test_the_workspace_declares_console_scripts() -> None:
-    assert set(_SCRIPTS) >= {"batch", "orbit", "review-diff", "review-html", "snippets"}
+    assert set(_SCRIPTS) >= {
+        "batch",
+        "orbit",
+        "review-diff",
+        "review-html",
+        "snippets",
+        "vwt",
+    }
 
 
 @pytest.mark.parametrize("target", _SCRIPTS.values(), ids=list(_SCRIPTS))
