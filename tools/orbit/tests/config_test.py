@@ -351,7 +351,7 @@ class TestRender:
 
 class TestThisRepositorysConfig:
     def test_this_repository_ships_a_loadable_orbit_toml(self) -> None:
-        # Every dev/orbit command now dies without it, and every other
+        # Every orbit command now dies without it, and every other
         # test in the suite runs against a patched repo root, so this
         # is the only thing standing between a typo in the real file
         # and a green suite.

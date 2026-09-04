@@ -10,7 +10,6 @@ import click
 from click import UsageError
 from click.decorators import FC
 
-from orbit.completion import source_with_alias
 from orbit.config import ConfigError, Milestones, ProjectConfig, load_config
 from orbit.core import open_url
 from orbit.filtering import partition_filtered, partition_standalone
@@ -44,17 +43,12 @@ from orbit.text_output import (
 from orbit.tree import FilteredRun, build_tree
 from orbit.tui.app import OrbitApp, run_tui
 
-PROG_NAME = "dev/orbit"
-SCRIPT_NAME = "orbit"
+PROG_NAME = "orbit"
 COMPLETE_VAR = "_ORBIT_COMPLETE"
 _CONFIG_KEY = "orbit.config"
 
 
 def main(args: Sequence[str] | None = None) -> None:
-    source = source_with_alias(cli, PROG_NAME, COMPLETE_VAR, SCRIPT_NAME)
-    if source is not None:
-        click.echo(source, nl=False)
-        raise SystemExit(0)
     cli(args=args, prog_name=PROG_NAME, complete_var=COMPLETE_VAR)
 
 

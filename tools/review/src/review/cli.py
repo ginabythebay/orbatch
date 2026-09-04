@@ -23,14 +23,14 @@ import click
 from orbit.core import open_url
 from review.html import render as render_markdown
 
-PROG_NAME: Final = "dev/review-diff"
+PROG_NAME: Final = "review-diff"
 LENSES: Final = ("correctness", "tests", "conventions")
 DEFAULT_DIFF_SPEC: Final = "origin/main...HEAD"
 ALLOWED_TOOLS: Final = (
     "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
 )
 DISALLOWED_TOOLS: Final = (
-    "Bash(*pytest*),Bash(*dev/lint*),Bash(*ruff*),Bash(*black*),"
+    "Bash(*pytest*),Bash(*lint*),Bash(*ruff*),Bash(*black*),"
     "Bash(*basedpyright*),Edit,Write,NotebookEdit"
 )
 NO_ISSUE_CONTEXT: Final = (
