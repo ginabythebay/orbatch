@@ -18,8 +18,8 @@ def _run_main(
     argv: list[str],
     env: Mapping[str, str] | None = None,
 ) -> int:
-    # Click infers the program name from these two; the console script runs
-    # `python -m orbit`, which is what makes an inferred name unusable.
+    # Click infers the program name from these two; under `python -m orbit`
+    # the inferred name is a module path, which is why `main` passes its own.
     monkeypatch.setattr(sys, "argv", [_MODULE_PATH, *argv[1:]])
     monkeypatch.setattr(sys.modules["__main__"], "__package__", "orbit")
     monkeypatch.delenv("_ORBIT_COMPLETE", raising=False)

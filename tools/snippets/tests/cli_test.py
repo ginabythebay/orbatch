@@ -818,9 +818,11 @@ class TestMain:
             main(["--help"])
 
         assert exit_info.value.code == 0
-        out = capsys.readouterr().out
-        assert out.startswith("Usage: snippets")
-        assert "dev/" not in out
+        assert capsys.readouterr().out.startswith("Usage: snippets")
+
+    def test_the_usage_examples_name_the_console_script(self) -> None:
+        assert "dev/" not in (snippets.cli.__doc__ or "")
+        assert "\n    snippets yesterday\n" in (snippets.cli.__doc__ or "")
 
 
 def _git(args: list[str], cwd: Path) -> None:
