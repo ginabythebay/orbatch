@@ -29,8 +29,7 @@ Exception: `# pyright: reportPrivateUsage=false` is fine in test
 files, since tests legitimately need to poke at internal state.
 
 Run lint with `dev/lint`, never `uv run basedpyright`. A PreToolUse
-hook blocks the bare command, and CI and PyCharm both go through the
-wrapper.
+hook blocks the direct command, and CI goes through the wrapper.
 
 The reason: basedpyright resolves imports against a venv, and this
 checkout may be used from more than one environment at the same path,

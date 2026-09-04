@@ -8,7 +8,10 @@ if [[ "$(jq -r '.tool_name // ""' <<<"$payload")" != "Bash" ]]; then
 fi
 
 command="$(jq -r '.tool_input.command // ""' <<<"$payload")"
-invocation='(^|[;&|(])[[:space:]]*(uv[[:space:]]+run[[:space:]]+([^[:space:]]+[[:space:]]+)*)?basedpyright([[:space:]]|$)'
+# Matching the bare word, not a prefix: `env -u VIRTUAL_ENV uv run`, `uvx`
+# and `.venv/bin/` all reach the same binary. Denying a mention that is not
+# an invocation costs a rephrase; missing one defeats the guardrail.
+invocation='(^|[[:space:]/])basedpyright([[:space:]]|$)'
 
 if ! grep -qE "$invocation" <<<"$command"; then
     exit 0
