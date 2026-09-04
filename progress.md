@@ -438,3 +438,33 @@ manager (refuses unforced, succeeds forced); verified red under that mutation.
 
 Notes for next iteration: `Reclaimer` reaches removal only for branches that
 are ancestors of local `main`; every safety claim in reclaim rests on that.
+
+## 2026-09-04 — issue #27 drop orbit's unused shellcomp dependency
+
+https://github.com/ginabythebay/orbatch/issues/27
+
+Decisions:
+- One-line delete of `"shellcomp",` from `tools/orbit/pyproject.toml`;
+  `uv.lock` drops the two edges. Root `pyproject.toml` keeps the member and
+  the `[tool.uv.sources]` line — `batch` still imports it
+  (`batch/cli.py:87`).
+- The guard the issue asked about IS writable over the whole workspace: for
+  each member, every `[project.dependencies]` entry naming another member must
+  be imported somewhere under that member's dir (sweeping `tests/` too —
+  `tools/review` imports `portability` only from its test). Scanned by hand:
+  every member passes today. Not added here only because this iteration was
+  run under a "do not add new tests" constraint. Filed as `#32`.
+- Nothing else in the suite is dependency-edge sensitive: both
+  `tests/packaging/console_scripts_test.py` and the portability sweep read
+  `[tool.uv.workspace] members`, not deps.
+
+Files: tools/orbit/pyproject.toml, uv.lock, progress.md.
+
+Review: two findings. Missing progress entry — fixed (this). Missing
+workspace-wide guard — declined for the no-new-tests constraint, filed as
+`#32` with the reproduction and the test shape. Correctness lens: no
+findings.
+
+Notes for next iteration: `#32` is the open follow-up. Only the
+unused-declaration direction is checkable — `uv sync` installs the whole
+workspace, so a *missing* declaration never fails locally.
