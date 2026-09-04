@@ -14,7 +14,7 @@ from batch.models import (
     TeardownSkip,
     UnsafeRemovalError,
 )
-from batch.stack import StackManager, main_repo
+from batch.stack import StackManager, main_repo, worktree_root
 from batch.testing.scratch import SEED_CONTENT, TRACKED_FILE, Scratch, git, scratch
 
 
@@ -114,7 +114,7 @@ class TestEnsure:
         trees = sc.root / "trees"
         trees.mkdir()
 
-        slot = StackManager(sc.repo, worktree_root=trees, seed_image=sc.seed).ensure(
+        slot = StackManager(sc.repo, worktrees=trees, seed_image=sc.seed).ensure(
             9, "main"
         )
 
@@ -144,7 +144,7 @@ class TestEnsure:
     ) -> None:
         elsewhere = sc.root / "trees"
 
-        manager = StackManager(sc.repo, worktree_root=elsewhere, seed_image=sc.seed)
+        manager = StackManager(sc.repo, worktrees=elsewhere, seed_image=sc.seed)
 
         assert manager.mount_root == sc.repo.parent.parent
         assert manager.worktree_root == elsewhere
@@ -186,6 +186,14 @@ class TestMainRepo:
 
         assert main_repo(sc.repo) == sc.repo.resolve()
         assert main_repo(slot.worktree) == sc.repo.resolve()
+
+
+class TestWorktreeRoot:
+    def test_the_manager_defaults_to_the_shared_helper(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+
+        assert manager.worktree_root == worktree_root(sc.repo)
+        assert manager.ensure(9, "main").disk.parent == worktree_root(sc.repo)
 
 
 class TestIdempotence:

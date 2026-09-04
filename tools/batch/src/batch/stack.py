@@ -35,16 +35,22 @@ def main_repo(repo: Path | None = None) -> Path:
     return Path(common).parent
 
 
+def worktree_root(repo: Path) -> Path:
+    """Where a repo's slots live: the disks `VmRunner` looks for are the disks
+    `StackManager` creates, so both must derive them the same way."""
+    return repo.parent / "worktrees"
+
+
 class StackManager:
     def __init__(
         self,
         repo: Path,
         *,
-        worktree_root: Path | None = None,
+        worktrees: Path | None = None,
         seed_image: Path,
     ) -> None:
         self._repo: Path = repo
-        self._worktree_root: Path = worktree_root or repo.parent / "worktrees"
+        self._worktree_root: Path = worktrees or worktree_root(repo)
         self._seed_image: Path = seed_image.expanduser()
         self._worktree_root.mkdir(parents=True, exist_ok=True)
 

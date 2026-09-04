@@ -648,7 +648,9 @@ class FakeRunner:
 
     def debug_command(self, issue: int, session: VmSession) -> tuple[str, ...]:
         """Argv from the real builder: what the fake stands in for is the spawn."""
-        return VmRunner(self.root, config=batch_config).debug_command(issue, session)
+        return VmRunner(
+            self.root, worktree_root=self.root, config=batch_config
+        ).debug_command(issue, session)
 
     def clean(self, issue: int) -> bool:
         self.cleaned.append(issue)

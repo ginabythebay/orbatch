@@ -166,6 +166,7 @@ class TestRework:
         state = FakeState(batch_issue(10, BatchLabel.READY_FOR_REVIEW))
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=batch_config,
             disks=frozenset,

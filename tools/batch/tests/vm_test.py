@@ -52,13 +52,14 @@ from batch.vm import (
     keychain_token,
     plan_batch_command,
     plan_slot_branch,
+    scoped_run_root,
     secret_env,
     send_chain,
     session_for,
 )
 
 
-def _unreadable_table() -> frozenset[str]:
+def _unreadable_table() -> frozenset[Path]:
     raise OccupancyError("ps exited 1")
 
 
@@ -68,7 +69,9 @@ def _unreadable() -> BatchConfig:
 
 class TestALazyConfig:
     def test_the_socket_paths_never_resolve_the_config(self, tmp_path: Path) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=_unreadable)
+        runner = VmRunner(
+            tmp_path, worktree_root=tmp_path, environ={}, config=_unreadable
+        )
 
         assert runner.socket(1499) == tmp_path / "issue-1499.sock"
         assert runner.log(1499) == tmp_path / "issue-1499.log"
@@ -78,7 +81,9 @@ class TestALazyConfig:
     def test_building_a_vibe_invocation_propagates_the_failure(
         self, tmp_path: Path
     ) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=_unreadable)
+        runner = VmRunner(
+            tmp_path, worktree_root=tmp_path, environ={}, config=_unreadable
+        )
 
         with pytest.raises(ConfigError):
             _ = runner.vibe_command(
@@ -441,7 +446,7 @@ class TestLaunchCommand:
     def test_vibe_runs_under_dtach_with_the_console_tee_d_to_a_log(
         self, tmp_path: Path
     ) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=config)
+        runner = VmRunner(tmp_path, worktree_root=tmp_path, environ={}, config=config)
         spec = session(tmp_path / "issue-1499.raw")
 
         launch = runner.launch_command(1499, spec)
@@ -457,9 +462,9 @@ class TestLaunchCommand:
     def test_the_vibe_command_boots_the_given_disk(self, tmp_path: Path) -> None:
         disk = tmp_path / "issue-1499.raw"
 
-        console = VmRunner(tmp_path, environ={}, config=config).vibe_command(
-            session(disk)
-        )
+        console = VmRunner(
+            tmp_path, worktree_root=tmp_path, environ={}, config=config
+        ).vibe_command(session(disk))
 
         assert console[0] == "vibe"
         assert console[-2:] == ("--", str(disk))
@@ -467,7 +472,12 @@ class TestLaunchCommand:
         assert f"{Path('/tmp/claude-config')}:{CONFIG_MOUNT}:read-only" in console
 
     def test_the_runners_config_reaches_the_sends(self, tmp_path: Path) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=lambda: config("acme/gizmos"))
+        runner = VmRunner(
+            tmp_path,
+            worktree_root=tmp_path,
+            environ={},
+            config=lambda: config("acme/gizmos"),
+        )
 
         console = runner.vibe_command(session(tmp_path / "issue-1499.raw"))
 
@@ -476,22 +486,27 @@ class TestLaunchCommand:
 
 class TestPerIssuePaths:
     def test_two_issues_share_no_socket_or_log(self, tmp_path: Path) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=config)
+        runner = VmRunner(tmp_path, worktree_root=tmp_path, environ={}, config=config)
 
         paths = {runner.socket(1499), runner.log(1499), runner.socket(1500)}
 
         assert len(paths) == 3
         assert all(path.parent == tmp_path for path in paths)
 
-    def test_the_run_root_is_expanded(self) -> None:
-        runner = VmRunner(Path("~/.cache/batch"), environ={}, config=config)
+    def test_the_run_root_is_expanded(self, tmp_path: Path) -> None:
+        runner = VmRunner(
+            Path("~/.cache/batch"),
+            worktree_root=tmp_path,
+            environ={},
+            config=config,
+        )
 
         assert "~" not in str(runner.socket(1499))
 
     def test_attaching_takes_the_socket_first_and_never_redraws(
         self, tmp_path: Path
     ) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=config)
+        runner = VmRunner(tmp_path, worktree_root=tmp_path, environ={}, config=config)
 
         assert runner.attach_command(1499) == (
             "dtach",
@@ -563,6 +578,7 @@ class TestStagedConfig:
         items: list[str] = []
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=lambda item: items.append(item) or fake_token(item),
@@ -583,6 +599,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=lambda _item: "",
@@ -602,6 +619,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -619,6 +637,7 @@ class TestStagedConfig:
     ) -> None:
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -640,6 +659,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -678,6 +698,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -695,6 +716,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -713,6 +735,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -730,6 +753,7 @@ class TestStagedConfig:
         self._home(monkeypatch, tmp_path / "home")
         runner = VmRunner(
             tmp_path / "run",
+            worktree_root=tmp_path,
             environ={},
             config=config,
             token=fake_token,
@@ -746,7 +770,7 @@ class TestLaunchGuard:
     def test_a_second_launch_over_a_live_socket_is_refused(
         self, tmp_path: Path
     ) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=config)
+        runner = VmRunner(tmp_path, worktree_root=tmp_path, environ={}, config=config)
         runner.socket(1499).touch()
 
         with pytest.raises(AlreadyRunningError):
@@ -809,8 +833,21 @@ login -pf gina
 """
 
 
+def _slot_runner(root: Path, trees: Path, live: Path | None = None) -> VmRunner:
+    disks: frozenset[Path] = (
+        frozenset() if live is None else frozenset({live.resolve()})
+    )
+    return VmRunner(
+        root,
+        worktree_root=trees,
+        environ={},
+        config=config,
+        disks=lambda: disks,
+    )
+
+
 def idle(tmp_path: Path) -> VmRunner:
-    return VmRunner(tmp_path, environ={}, config=config, disks=frozenset)
+    return _slot_runner(tmp_path, tmp_path)
 
 
 def vibe_line(tmp_path: Path, branch: str = "issue-9") -> str:
@@ -825,13 +862,17 @@ def vibe_line(tmp_path: Path, branch: str = "issue-9") -> str:
 
 
 class TestDisksInUse:
-    def test_a_live_vibe_command_line_names_its_disk(self, tmp_path: Path) -> None:
-        assert disks_in_use(f"{PS_OUTPUT}{vibe_line(tmp_path)}\n") == {"issue-9.raw"}
+    def test_a_live_vibe_command_line_names_its_disk_by_path(
+        self, tmp_path: Path
+    ) -> None:
+        assert disks_in_use(f"{PS_OUTPUT}{vibe_line(tmp_path)}\n") == {
+            (tmp_path / "issue-9.raw").resolve()
+        }
 
     def test_only_whole_argv_tokens_count_as_a_disk(self, tmp_path: Path) -> None:
         text = f"vibe -- {tmp_path}/plan-133.raw\nvibe -- {tmp_path}/plan-13.raw.bak\n"
 
-        assert disks_in_use(text) == {"plan-133.raw"}
+        assert disks_in_use(text) == {(tmp_path / "plan-133.raw").resolve()}
 
     def test_a_command_line_clipped_before_its_disk_names_nothing(
         self, tmp_path: Path
@@ -877,9 +918,10 @@ class TestStatus:
     ) -> None:
         runner = VmRunner(
             tmp_path,
+            worktree_root=tmp_path,
             environ={},
             config=config,
-            disks=lambda: frozenset({"issue-1499.raw"}),
+            disks=lambda: frozenset({tmp_path / "issue-1499.raw"}),
         )
 
         assert not runner.socket(1499).exists()
@@ -890,7 +932,13 @@ class TestStatus:
     ) -> None:
         # `vm launch`'s "don't boot a second VM on this disk" guard must survive
         # a host whose process table cannot be read.
-        runner = VmRunner(tmp_path, environ={}, config=config, disks=_unreadable_table)
+        runner = VmRunner(
+            tmp_path,
+            worktree_root=tmp_path,
+            environ={},
+            config=config,
+            disks=_unreadable_table,
+        )
         runner.socket(1499).touch()
 
         assert runner.status(1499) is VmStatus.RUNNING
@@ -898,7 +946,13 @@ class TestStatus:
     def test_an_unreadable_process_table_refuses_rather_than_reporting_exited(
         self, tmp_path: Path
     ) -> None:
-        runner = VmRunner(tmp_path, environ={}, config=config, disks=_unreadable_table)
+        runner = VmRunner(
+            tmp_path,
+            worktree_root=tmp_path,
+            environ={},
+            config=config,
+            disks=_unreadable_table,
+        )
 
         with pytest.raises(OccupancyError):
             _ = runner.status(1499)
@@ -906,9 +960,68 @@ class TestStatus:
     def test_neither_signal_reads_as_exited(self, tmp_path: Path) -> None:
         runner = VmRunner(
             tmp_path,
+            worktree_root=tmp_path,
             environ={},
             config=config,
-            disks=lambda: frozenset({"issue-1500.raw"}),
+            disks=lambda: frozenset({tmp_path / "issue-1500.raw"}),
         )
 
         assert runner.status_branch("issue-1499") is VmStatus.EXITED
+
+
+def _issue_artifacts(runner: VmRunner, issue: int) -> tuple[Path, ...]:
+    return (
+        runner.socket(issue),
+        runner.log(issue),
+        runner.config_dir(issue),
+        runner.claim_path(f"issue-{issue}"),
+    )
+
+
+class TestPerRepositoryArtifacts:
+    def test_one_issue_number_in_two_repositories_shares_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        acme = _slot_runner(scoped_run_root(tmp_path, "acme/widgets"), tmp_path)
+        other = _slot_runner(scoped_run_root(tmp_path, "other/widgets"), tmp_path)
+
+        mine = _issue_artifacts(acme, 12)
+        theirs = _issue_artifacts(other, 12)
+
+        assert len(set(mine)) == len(mine)
+        assert set(mine).isdisjoint(theirs)
+
+
+class TestCrossRepositoryDisks:
+    def test_another_repository_s_live_slot_is_not_this_one(
+        self, tmp_path: Path
+    ) -> None:
+        mine = tmp_path / "mine" / "worktrees"
+        theirs = tmp_path / "theirs" / "worktrees"
+
+        runner = _slot_runner(tmp_path / "run", mine, theirs / "issue-12.raw")
+
+        assert runner.status_branch("issue-12") is VmStatus.EXITED
+
+    def test_this_repository_s_live_slot_still_reads_as_running(
+        self, tmp_path: Path
+    ) -> None:
+        mine = tmp_path / "mine" / "worktrees"
+
+        runner = _slot_runner(tmp_path / "run", mine, mine / "issue-12.raw")
+
+        assert runner.status_branch("issue-12") is VmStatus.RUNNING
+
+
+class TestScopedRunRoot:
+    def test_the_slug_becomes_two_path_segments_under_the_base(self) -> None:
+        assert scoped_run_root(Path("~/.cache/batch"), "acme/widgets") == Path(
+            "~/.cache/batch/acme/widgets"
+        )
+
+    def test_two_slugs_never_share_a_root(self) -> None:
+        base = Path("/cache")
+
+        assert scoped_run_root(base, "acme/widgets") != scoped_run_root(
+            base, "other/widgets"
+        )

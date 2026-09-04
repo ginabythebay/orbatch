@@ -12,6 +12,7 @@ from time import sleep
 from typing import cast
 
 import click
+from click.core import ParameterSource
 from click.decorators import FC
 
 from batch.agent import PlanningAgent
@@ -51,7 +52,7 @@ from batch.orchestrator import (
 from batch.order import MAIN
 from batch.reclaim import Reclaimer
 from batch.recovery import Recovery
-from batch.stack import StackManager, main_repo
+from batch.stack import StackManager, main_repo, worktree_root
 from batch.state import BatchState
 from batch.teardown import Teardown
 from batch.text_output import (
@@ -76,6 +77,7 @@ from batch.vm import (
     agent_command,
     plan_batch_command,
     plan_slot_branch,
+    scoped_run_root,
     session_for,
 )
 from batch.watch import DEFAULT_WATCH_INTERVAL
@@ -169,8 +171,23 @@ def _prog(ctx: click.Context) -> str:
         return FALLBACK_PROG
 
 
+def _run_root(ctx: click.Context, run_root: Path) -> Path:
+    """Scopes the default by the repo's slug; an explicit flag is taken as given.
+
+    The per-repo path cannot be a click default: it needs the loaded config,
+    which the option declaration has no access to.
+    """
+    if ctx.get_parameter_source("run_root") is not ParameterSource.DEFAULT:
+        return run_root.expanduser()
+    return scoped_run_root(run_root, _resolve_config(ctx).slug).expanduser()
+
+
 def _runner(ctx: click.Context, root: Path) -> VmRunner:
-    return VmRunner(root, config=lambda: _resolve_config(ctx))
+    return VmRunner(
+        root,
+        worktree_root=worktree_root(_main_repo(ctx)),
+        config=lambda: _resolve_config(ctx),
+    )
 
 
 def _resolve_state(ctx: click.Context) -> BatchState:
@@ -296,8 +313,9 @@ def status(
 ) -> None:
     """Show every batch issue the targets name, in stack order."""
     ctx = click.get_current_context()
+    root = _run_root(ctx, run_root)
     batch = state.batch(targets)
-    facts = _vm_facts(batch, _runner(ctx, run_root.expanduser())) if verbose else None
+    facts = _vm_facts(batch, _runner(ctx, root)) if verbose else None
     print_batch_table(batch, sys.stdout, facts, prog=_prog(ctx))
 
 
@@ -425,7 +443,7 @@ def vm(ctx: click.Context, run_root: Path) -> None:
     """Run an agent VM, attached or detached."""
     existing = cast("object", ctx.obj)
     if not isinstance(existing, VmRunner):
-        ctx.obj = _runner(ctx, run_root)
+        ctx.obj = _runner(ctx, _run_root(ctx, run_root))
 
 
 def _agent_options(f: FC) -> FC:
@@ -852,7 +870,7 @@ def run(
     The dashboard is the default surface; a non-terminal stdout streams instead,
     so pipes and CI need no flag.
     """
-    root = run_root.expanduser()
+    root = _run_root(ctx, run_root)
     prog = _prog(ctx)
     narration: list[str] = []
     rendered = not cli_only and _interactive()
@@ -939,7 +957,7 @@ def cleanup(ctx: click.Context, targets: tuple[int, ...], run_root: Path) -> Non
     """Reclaim the worktree, branch, disk, and config of every merged issue the
     targets name."""
     try:
-        result = _resolve_teardown(ctx, run_root.expanduser()).sweep(targets)
+        result = _resolve_teardown(ctx, _run_root(ctx, run_root)).sweep(targets)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     print_teardown_result(result, sys.stdout)
@@ -973,7 +991,9 @@ def gc(ctx: click.Context, dry_run: bool, run_root: Path) -> None:
     from — the ad-hoc branches, spent planning worktrees, and label-less
     leftovers no sweep can name. Start with --dry-run."""
     try:
-        result = _resolve_reclaimer(ctx, run_root.expanduser()).collect(dry_run=dry_run)
+        result = _resolve_reclaimer(ctx, _run_root(ctx, run_root)).collect(
+            dry_run=dry_run
+        )
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     print_reclaim_result(result, sys.stdout)
@@ -1023,7 +1043,7 @@ def attach(ctx: click.Context, issue_number: int, run_root: Path) -> None:
     Attaching shows nothing until the VM writes again. For history, read the
     per-issue log the run is tee'd to; `vm status` prints its path.
     """
-    runner = _runner(ctx, run_root.expanduser())
+    runner = _runner(ctx, _run_root(ctx, run_root))
     if runner.status(issue_number) is VmStatus.EXITED:
         raise click.ClickException(f"No live VM for #{issue_number}.")
     _run(ctx, runner.attach_command(issue_number), dry_run=False)
@@ -1071,7 +1091,7 @@ def rework(
     exactly as found.
     """
     try:
-        verbs = _resolve_verbs(ctx, run_root.expanduser(), targets, model)
+        verbs = _resolve_verbs(ctx, _run_root(ctx, run_root), targets, model)
         result = verbs.rework(issue_number)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -1103,7 +1123,7 @@ def debug(
     dry_run: bool,
 ) -> None:
     """Boot an issue's existing VM in this terminal, resuming the agent's session."""
-    root = run_root.expanduser()
+    root = _run_root(ctx, run_root)
     config = _resolve_config(ctx)
     debugger = Debugger(
         StackManager(_main_repo(ctx), seed_image=config.seed_image),
@@ -1128,7 +1148,7 @@ def debug(
 @click.pass_context
 def skip(ctx: click.Context, issue_number: int, run_root: Path) -> None:
     """Drop an issue from the batch, leaving its approved plan in the body."""
-    recovery = _resolve_recovery(ctx, run_root.expanduser())
+    recovery = _resolve_recovery(ctx, _run_root(ctx, run_root))
     try:
         result = recovery.skip(issue_number)
     except RuntimeError as exc:
@@ -1142,7 +1162,7 @@ def skip(ctx: click.Context, issue_number: int, run_root: Path) -> None:
 @click.pass_context
 def relaunch(ctx: click.Context, issue_number: int, run_root: Path) -> None:
     """Send a stuck issue back to 'planned' for the next run to pick up."""
-    recovery = _resolve_recovery(ctx, run_root.expanduser())
+    recovery = _resolve_recovery(ctx, _run_root(ctx, run_root))
     try:
         result = recovery.relaunch(issue_number)
     except RuntimeError as exc:
@@ -1241,7 +1261,7 @@ def plan(
     writes plans to issue bodies over the API and commits nothing, so the slot
     is scratch; `gc` reclaims one a crash left behind.
     """
-    root = run_root.expanduser()
+    root = _run_root(ctx, run_root)
     branch = plan_slot_branch(os.getpid())
     config = _resolve_config(ctx)
     manager = StackManager(_main_repo(ctx), seed_image=config.seed_image)

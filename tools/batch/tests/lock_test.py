@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from batch.lock import BatchInProgressError, run_lock
+from batch.vm import scoped_run_root
 
 
 class TestRunLock:
@@ -37,3 +38,24 @@ class TestRunLock:
 
         with run_lock(root) as path:
             assert path.parent == root
+
+    def test_two_repositories_hold_their_own_run_at_the_same_time(
+        self, tmp_path: Path
+    ) -> None:
+        acme = scoped_run_root(tmp_path, "acme/widgets")
+        other = scoped_run_root(tmp_path, "other/widgets")
+
+        with run_lock(acme), run_lock(other):
+            pass
+
+    def test_a_second_run_in_the_same_repository_is_still_refused(
+        self, tmp_path: Path
+    ) -> None:
+        root = scoped_run_root(tmp_path, "acme/widgets")
+
+        with (
+            run_lock(root),
+            pytest.raises(BatchInProgressError),
+            run_lock(scoped_run_root(tmp_path, "acme/widgets")),
+        ):
+            pass

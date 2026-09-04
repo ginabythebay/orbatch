@@ -38,8 +38,13 @@ def manager(sc: Scratch) -> StackManager:
     return StackManager(sc.repo, seed_image=sc.seed)
 
 
-def vms(sc: Scratch, *, disks: Sequence[str] = ()) -> VmRunner:
-    return VmRunner(sc.root, config=batch_config, disks=lambda: frozenset(disks))
+def vms(sc: Scratch, *, disks: Sequence[Path] = ()) -> VmRunner:
+    return VmRunner(
+        sc.root,
+        worktree_root=sc.trees,
+        config=batch_config,
+        disks=lambda: frozenset(disk.resolve() for disk in disks),
+    )
 
 
 def reclaimer(
@@ -47,7 +52,7 @@ def reclaimer(
     *,
     live_pids: Sequence[int] = (),
     occupied: Sequence[str] = (),
-    disks: Sequence[str] = (),
+    disks: Sequence[Path] = (),
 ) -> Reclaimer:
     return Reclaimer(
         manager(sc),
@@ -213,7 +218,9 @@ class TestRacedRemoval:
 
         result = Reclaimer(
             stack,
-            VmRunner(tmp_path, config=batch_config, disks=frozenset),
+            VmRunner(
+                tmp_path, worktree_root=tmp_path, config=batch_config, disks=frozenset
+            ),
             occupied=frozenset,
         ).collect()
 
@@ -373,10 +380,12 @@ class TestOccupancy:
         _ = manager(sc).ensure(9, "main")
         stack = CountingStack(manager(sc))
 
-        def refuse() -> frozenset[str]:
+        def refuse() -> frozenset[Path]:
             raise OccupancyError("ps exited 1")
 
-        runner = VmRunner(sc.root, config=batch_config, disks=refuse)
+        runner = VmRunner(
+            sc.root, worktree_root=sc.trees, config=batch_config, disks=refuse
+        )
 
         with pytest.raises(OccupancyError):
             _ = Reclaimer(stack, runner, occupied=frozenset).collect()
@@ -416,10 +425,20 @@ class TestAttachedConsole:
         # merged, clean, unclaimed and socket-less while a VM is live in it.
         _ = manager(sc).ensure(9, "main")
 
-        result = reclaimer(sc, disks=("issue-9.raw",)).collect()
+        result = reclaimer(sc, disks=(sc.trees / "issue-9.raw",)).collect()
 
         assert skips(result) == [("issue-9", TeardownSkip.VM_LIVE)]
         assert intact(sc, "issue-9")
+
+    def test_another_repository_s_live_disk_does_not_protect_this_slot(
+        self, sc: Scratch
+    ) -> None:
+        _ = manager(sc).ensure(9, "main")
+        elsewhere = sc.root / "other" / "worktrees" / "issue-9.raw"
+
+        result = reclaimer(sc, disks=(elsewhere,)).collect()
+
+        assert skips(result) == [("issue-9", None)]
 
 
 class TestClaimedSlot:
