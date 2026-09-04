@@ -124,7 +124,7 @@ backlog = "Backlog"      # the shelf
 [[commands]]
 key   = "w"              # a single letter or digit
 label = "Worktree"       # shown in the help screen
-run   = "open -na Ghostty --args -e 'dev/vwt {branch} {issue}'"
+run   = "open -na Ghostty --args -e 'vwt {branch} {issue}'"
 mode  = "spawn"          # "spawn" (default) | "suspend"
 ```
 

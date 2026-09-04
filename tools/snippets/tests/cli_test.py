@@ -447,9 +447,9 @@ class TestCountDeploys:
 
     def test_queries_the_configured_tag(self) -> None:
         fetch = _FakeAnnotations()
-        _ = count_deploys(_APRIL, "a-token", "pinky deploy", fetch)
+        _ = count_deploys(_APRIL, "a-token", "widget deploy", fetch)
         ((_, url),) = fetch.calls
-        assert "tags=pinky%20deploy" in url
+        assert "tags=widget%20deploy" in url
 
     def test_counts_only_annotations_inside_the_period(self) -> None:
         fetch = _FakeAnnotations(
@@ -580,13 +580,13 @@ class TestPrintReport:
                 ),
                 _repo_report(
                     [_issue(7, title="work in the second", created="2026-04-09")],
-                    name="pinky",
+                    name="widget",
                 ),
             )
         )
         assert lines[0] == "Period: 2026-04-01 to 2026-04-30"
         heads = [
-            i for i, line in enumerate(lines) if "orbatch" in line or "pinky" in line
+            i for i, line in enumerate(lines) if "orbatch" in line or "widget" in line
         ]
         assert len(heads) == 2
         assert lines.count("STANDALONE WORK:") == 2
@@ -733,21 +733,21 @@ class TestCli:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         result, client, discovery = self._run(
-            ["--repo", "/src/orbatch", "--repo", "/src/pinky"], monkeypatch
+            ["--repo", "/src/orbatch", "--repo", "/src/widget"], monkeypatch
         )
         assert result.exit_code == 0
-        assert discovery.roots == [Path("/src/orbatch"), Path("/src/pinky")]
+        assert discovery.roots == [Path("/src/orbatch"), Path("/src/widget")]
         assert len(client.calls) == 2
         assert "orbatch" in result.stdout
-        assert "pinky" in result.stdout
+        assert "widget" in result.stdout
 
     def test_each_repo_is_queried_against_its_own_slug(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _, client, _ = self._run(
-            ["--repo", "/src/orbatch", "--repo", "/src/pinky"], monkeypatch
+            ["--repo", "/src/orbatch", "--repo", "/src/widget"], monkeypatch
         )
-        assert [target.name for target in client.targets] == ["orbatch", "pinky"]
+        assert [target.name for target in client.targets] == ["orbatch", "widget"]
 
     def test_one_unusable_repo_does_not_cost_the_others(
         self, monkeypatch: pytest.MonkeyPatch
@@ -758,7 +758,7 @@ class TestCli:
             return cwd or _DISCOVERED_ROOT
 
         result, client, _ = self._run(
-            ["--repo", "/src/gone", "--repo", "/src/pinky"],
+            ["--repo", "/src/gone", "--repo", "/src/widget"],
             monkeypatch,
             root_finder=sometimes_missing,
         )
@@ -771,16 +771,16 @@ class TestCli:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = tmp_path / "snippets.toml"
-        _ = config.write_text('[[repo]]\npath = "/src/pinky"\ndeploy_tag = "deploy"\n')
+        _ = config.write_text('[[repo]]\npath = "/src/widget"\ndeploy_tag = "deploy"\n')
         result, _, discovery = self._run([], monkeypatch, config=config)
-        assert discovery.roots == [Path("/src/pinky")]
+        assert discovery.roots == [Path("/src/widget")]
         assert "DEPLOYS:" in result.stdout
 
     def test_a_flag_overrides_the_configured_repos(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = tmp_path / "snippets.toml"
-        _ = config.write_text('[[repo]]\npath = "/src/pinky"\n')
+        _ = config.write_text('[[repo]]\npath = "/src/widget"\n')
         _, _, discovery = self._run(
             ["--repo", "/src/orbatch"], monkeypatch, config=config
         )

@@ -38,6 +38,171 @@ Notes for next iteration: `#9` is the real follow-up. `gh label create
 milestones at all, so the new issue got none despite `.orbit.toml`
 `current = "import"`.
 
+## 2026-09-03 — issue #3 escape issue titles in print_batch_table
+
+https://github.com/ginabythebay/orbatch/issues/3
+
+Decisions:
+- One-line fix: `escape(issue.title)` in `print_batch_table`, matching
+  `_issue_row`. Not `markup=False` on the Console — the adjacent state cell
+  relies on markup for its color.
+- Audit confirmed (correctness lens agreed): that call site is the only
+  GitHub-sourced string reaching a rich renderer in `tools/batch/src`.
+  Everything else writes to the raw `TextIO` or goes through `Text`.
+- Test plan case 4 (table/dashboard agree) written as a real comparison via
+  a `_title_cell` helper, not two substring checks — see review below.
+
+Files: tools/batch/src/batch/text_output.py,
+tools/batch/tests/text_output_test.py (new `TestBatchTableTitleMarkup`,
+4 cases + `_title_cell`).
+
+Review: two merged findings, both minor, both fixed. (1) case 4 duplicated
+existing coverage instead of comparing the two paths — now extracts and
+compares the title cells. (2) case 1 asserted only `[/tmp]`, not the whole
+title — now asserts the full string. Correctness lens: no findings.
+
+Notes for next iteration: `#9` (from `#2`'s review) is still the open
+follow-up. `_title_cell` splits the first rendered line on the state word;
+it works because both renders put the title last and elapsed defaults to "".
+
+## 2026-09-03 — issue #4 foreign-repo closing keywords must not verify
+
+https://github.com/ginabythebay/orbatch/issues/4
+
+Decisions:
+- Took the issue's design: `_REFERENCE` captures the `owner/repo` prefix and
+  `closing_references(body, slug)` drops any reference whose slug differs
+  (case-insensitively). Filter lives in `body.py`, so no call site can skip it.
+- Slug comes from `BatchGitHub.repo` (`f"{owner}/{name}"`), built in
+  `fetch_pull_requests` and passed to `_to_pull_request` — the repo the query
+  actually ran against, not `BatchConfig.slug`.
+- `body_test.py` gets a local `SLUG = "acme/widgets"` rather than importing
+  `payloads.TEST_SLUG`: that file imports nothing from `batch.testing` today.
+- Payload builders `pull_request`/`pull_requests` already existed; case 6
+  needed no new fixture.
+
+Files: tools/batch/src/batch/body.py,
+tools/batch/src/batch/github/client.py,
+tools/batch/tests/body_test.py (3 new cases + slug arg at 10 call sites),
+tools/batch/tests/client_test.py (new `TestClosingReferences`).
+
+Review: one merged finding, all three lenses, fixed — the client test only
+asserted the negative (`closes == ()` for a foreign slug), which passes for
+any wrong slug incl. transposed `widgets/acme`. Now asserts `[(), (9,)]` over
+two nodes; confirmed by mutating the slug order (test fails) and restoring.
+
+Notes for next iteration: `#9` (from `#2`'s review) still open. Bare `#n` is
+still slug-agnostic by design, so client-level tests using bare references
+pin nothing about the slug — the qualified-body case is the only guard.
+
+## 2026-09-03 — issue #5 _watch_passes must not stack _QuietRepeats
+
+https://github.com/ginabythebay/orbatch/issues/5
+
+Decisions:
+- Took the issue's design: `_watch_passes` saves `orchestrator.report` before
+  wrapping and restores it in a `finally`, so wrapper depth stays at one on
+  the normal return and on the KeyboardInterrupt -> SystemExit(130) route.
+- Tests drive `_watch_passes` directly (private import with a one-line pyright
+  ignore, not a file-wide `reportPrivateUsage=false`).
+- Fixture for a line that repeats: a closed-unmerged `#9` in `FakeState.closed`
+  makes every sweep report "#9 left alone (not-merged)". `run()` sweeps twice
+  per pass, so one call exercises the dedupe and two calls the stacking bug.
+- Case 5 needs `show` to fire, and `watch()` only calls it when the pass has
+  outcomes — hence the extra `batch_issue(10)` alongside the queued target.
+- Interrupt injected via `FakeState.on_fetch`, which raises inside `state.batch`
+  under the `try`, so a trailing restore statement would not pass.
+
+Files: tools/batch/src/batch/cli.py,
+tools/batch/tests/cli_test.py (new `TestWatchPassesWrapper`, 5 cases).
+
+Review: one merged finding (conventions lens) — the two
+`orchestrator.report == said.append` assertions mirror the diff; drop them.
+Declined the deletion: those are cases 2 and 3 of the issue's own test plan.
+Fixed the real half — the interrupt case now drives a second pass afterwards
+and asserts the refusal line is narrated again (verified red without the
+`finally`). Correctness and tests lenses: no findings.
+
+Notes for next iteration: `#9` (from `#2`'s review) still open. Pre-existing
+and unfixed: `watch()` only calls `report` on passes with outcomes, so during
+a long idle streak `_QuietRepeats` never resets and refusals are said once for
+the whole streak, not once per pass as its docstring claims.
+
+## 2026-09-03 — issue #6 share source_with_alias via packages/shellcomp
+
+https://github.com/ginabythebay/orbatch/issues/6
+
+Decisions:
+- Took the issue's design decision: new workspace member `packages/shellcomp`
+  (click only), not `ghgql` — ghgql has no click dep and is named for GraphQL.
+- `git mv` of batch's copy (byte-identical to orbit's) so history follows;
+  orbit's deleted. Both `cli.py` import `shellcomp.completion`.
+- Wiring: root `dependencies`, `[tool.uv.sources]`, `testpaths`, plus a
+  `shellcomp` dep in both tools' pyproject. `console_scripts_test.py` picked
+  the member up unchanged, as the issue predicted.
+- Both packages' existing `completion_test.py` left untouched (they are
+  end-to-end through `__main__`, not duplicates) and pass.
+- Test 1 asserts the two `complete` lines by last word; click nests the
+  prog-name one inside `_widget_completion_setup()`, so lines are stripped.
+
+Files: packages/shellcomp/{pyproject.toml,src/shellcomp/{__init__.py,
+completion.py,py.typed},tests/completion_test.py}, pyproject.toml, uv.lock,
+tools/{batch,orbit}/pyproject.toml, tools/{batch/src/batch,orbit/src/orbit}/
+cli.py, tools/batch/tests/portability_test.py, README.md, CLAUDE.md.
+
+Review: four merged findings, all fixed. (1) no assertion that the emitted
+script carries the requested complete var — added. (2,3) CLAUDE.md still said
+"five packages" and README's table omitted the member — both updated. (4) the
+move dropped the module from batch's portability guard — that test now sweeps
+`batch` and `shellcomp` roots, parametrized over (root, source) pairs.
+
+Notes for next iteration: `#9` (from `#2`'s review) still open. Anything that
+`batch.cli` calls but does not live under `tools/batch/src` needs adding to
+`portability_test._SOURCES` by hand — there is no automatic sweep of deps.
+
+## 2026-09-03 — issue #7 scrub host-repo names, widen the portability guard
+
+https://github.com/ginabythebay/orbatch/issues/7
+
+Decisions:
+- New workspace member `packages/portability`: `names.py` holds the two
+  host-repo names base64-encoded plus their published SHA-256 `DIGESTS`, and
+  `tests/portability_test.py` is the workspace guard. A member, not a root
+  `tests/` module, so `tools/review/tests` can import it by declared
+  dependency rather than by path (CLAUDE.md Architecture).
+- `tools/batch/tests/portability_test.py` deleted. **`_SOURCES` no longer
+  exists**: the sweep is automatic over `git ls-files --cached --others
+  --exclude-standard`, so a new package or file needs no hand-registration.
+  (Supersedes the note at the end of the #6 entry.)
+- Names matched by substring on the lowercased text, not by token. The issue
+  designed a `[^a-z0-9-]+` tokenizer; review showed that regressed both
+  guards it replaces (`<name>-tools`, `v<name>` escape it). See review below.
+- `DIGESTS` kept and pinned in `names_test.py` to the digests the issue
+  published, so the encoded literals cannot drift from the real names.
+- `dev/` half kept but scoped by an exemption list: orbit, review and
+  snippets still carry `dev/` PROG_NAMEs (user-visible), filed as `#15`.
+- Fixtures renamed to `widget`; `orbatch` < `widget` preserves the two
+  ordering assertions at snippets `cli_test.py:589` and `:750`.
+- Review's `_REPO_SPECIFIC` drops its literal entry and routes through
+  `forbidden_words` via a shared `_repo_specific` helper, tested by planting
+  a name in a template text.
+
+Files: packages/portability/** (new), pyproject.toml, uv.lock, README.md,
+CLAUDE.md, tools/review/{pyproject.toml,tests/cli_test.py},
+tools/snippets/tests/{cli_test.py,config_test.py},
+tools/batch/tests/portability_test.py (deleted).
+
+Review: 8 merged findings, 7 fixed, 1 declined (store digests only, no
+recoverable form — declined because test-plan item 3 needs a real name to
+plant, and the reviewer's test-local-digest alternative is the very hole
+item 3 closes). Full table in the PR body.
+
+Notes for next iteration: `#9` and `#15` are the open follow-ups. Issue #7's
+"Final step" asks that the issue be replaced by a closed copy and then
+`gh issue delete 7` — **after** the PR merges and batch's teardown sweep
+finishes. Not done here; left to whoever merges, and flagged in the PR
+caveats. progress.md is scanned by the new guard, so never spell the names
+here.
 ## 2026-09-04 — issue #9 teardown reclaims squash-landed slots
 
 https://github.com/ginabythebay/orbatch/issues/9
@@ -117,3 +282,50 @@ renames rest on hand-written usage-line assertions. `#19` tracks dropping
 the exemption once both stacks land. Expect conflicts merging with `#7`:
 it moves `orbit/completion.py` to `packages/shellcomp` while this deletes
 it, and both touch `orbit/cli.py`'s import block.
+## 2026-09-04 — issue #18 vwt as a repo-agnostic command
+
+https://github.com/ginabythebay/orbatch/issues/18
+
+Decisions:
+- New `tools/batch/src/batch/worktree.py`, console script `vwt`. Setup and
+  teardown go through `StackManager`; the boot goes through the configured
+  `[commands] cli` as `vm console`, injected as a `Console` protocol so tests
+  fake the boot. Branch is cut from `HEAD`, as the bash did; `--base` steers
+  the agent, not the branch point.
+- The spawn passes `--repo <relative worktree>` before `vm console` (the bash
+  did too): cwd is the mount root, which is inside no checkout, so batch
+  cannot find `batch.toml` without it.
+- Fresh `TemporaryDirectory` per boot, removed with it — replaces the bash
+  `mktemp -d` + trap that kept staged secrets from outliving the session.
+- Teardown prompts on a dirty worktree as well as unpushed commits, then
+  removes with `force=True`: the r/d/q loop is the safety check, and
+  `_refuse_if_unsafe` would refuse the delete the user just confirmed while
+  stranding the disk.
+- `vwt` re-checks the option combinations `vm console` refuses
+  (`--base`/GUIDANCE with no ISSUE, `-n`/`-g` with GUIDANCE) before creating a
+  slot, and a test feeds `agent_flags` output through `batch vm console
+  --dry-run` so the two surfaces cannot drift.
+- `StackManager.unpushed` widened with `--exclude <branch> --branches`.
+  Consequence beyond the issue's claim: `Reclaimer._unsafe`'s
+  UNPUSHED_COMMITS can no longer fire (reclaim only reaches it once the branch
+  is an ancestor of local `main`, which then holds every commit). Slots cut
+  from unpushed work `main` still holds are now reclaimed — correct, but it
+  rewrote `reclaim_test.py`'s unpushed test. Merging `#9` after the review
+  brought a second one — `test_a_squash_landed_branch_is_left_alone`, whose
+  local merge into `main` is what makes the commits safe — flipped the same
+  way. Left the pre-check standing; filed `#22`.
+
+Files: tools/batch/src/batch/worktree.py (new),
+tools/batch/src/batch/stack.py, tools/batch/pyproject.toml,
+tools/batch/tests/worktree_test.py (new), tools/batch/tests/stack_test.py,
+tools/batch/tests/reclaim_test.py, tests/packaging/console_scripts_test.py,
+README.md, CLAUDE.md, tools/orbit/docs/tui-design.md.
+
+Review: nine merged findings, eight fixed (callee-rejected argv + missing
+click-layer tests, missing `commands.cli` traceback, a no-op sibling branch in
+a stack test, three docs, this entry), one declined and filed as `#22`.
+
+Notes for next iteration: the extraction repo still ships `dev/vwt` and
+`dev/vibe_ralph` — deleting them, adding `~/bin/vwt`, and updating its four
+docs is the follow-up `#18` names. Nothing here is verified against a real
+VM boot.

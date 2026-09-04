@@ -123,16 +123,32 @@ class TestReclaim:
         assert skips(result) == [("issue-9", TeardownSkip.DIRTY_WORKTREE)]
         assert intact(sc, "issue-9")
 
-    def test_a_branch_with_unpushed_commits_is_left_alone(self, sc: Scratch) -> None:
+    def test_a_slot_cut_from_unpushed_work_main_still_holds_is_reclaimed(
+        self, sc: Scratch
+    ) -> None:
+        """Nothing is lost with the slot: every commit on it is on main too."""
         _ = sc.commit("landed but never pushed")
-        _ = manager(sc).ensure(9, "main")
+        slot = manager(sc).ensure(9, "main")
 
         result = reclaimer(sc).collect()
 
-        assert skips(result) == [("issue-9", TeardownSkip.UNPUSHED_COMMITS)]
+        assert skips(result) == [("issue-9", None)]
+        assert not slot.worktree.exists()
+
+    def test_a_branch_with_commits_of_its_own_is_left_alone(self, sc: Scratch) -> None:
+        slot = manager(sc).ensure(9, "main")
+        _ = git(slot.worktree, "commit", "-q", "--allow-empty", "-m", "agent work")
+
+        result = reclaimer(sc).collect()
+
+        assert skips(result) == [("issue-9", TeardownSkip.NOT_MERGED)]
         assert intact(sc, "issue-9")
 
-    def test_a_squash_landed_branch_is_left_alone(self, sc: Scratch) -> None:
+    def test_a_squash_landed_branch_main_has_merged_is_reclaimed(
+        self, sc: Scratch
+    ) -> None:
+        """`_unsafe` is only reached once the branch is an ancestor of `main`,
+        which is what puts its commits somewhere the removal cannot take them."""
         slot = manager(sc).ensure(9, "main")
         _ = sc.commit_file(slot.worktree, "feature.txt", "the work\n", "agent work")
         sc.push("issue-9", slot.worktree)
@@ -142,8 +158,8 @@ class TestReclaim:
 
         result = reclaimer(sc).collect()
 
-        assert skips(result) == [("issue-9", TeardownSkip.UNPUSHED_COMMITS)]
-        assert intact(sc, "issue-9")
+        assert skips(result) == [("issue-9", None)]
+        assert not slot.worktree.exists()
 
     def test_a_slot_whose_socket_exists_is_left_alone(self, sc: Scratch) -> None:
         _ = manager(sc).ensure_branch("subtienodm", "main")

@@ -6,6 +6,8 @@ import pytest
 
 from batch.body import closing_references, guidance, has_test_plan
 
+SLUG = "acme/widgets"
+
 
 class TestTestGuidance:
     def test_a_body_without_the_section_has_none(self) -> None:
@@ -40,7 +42,7 @@ class TestHasTestPlan:
 
 class TestClosingReferences:
     def test_the_workflow_convention_closes_its_issue(self) -> None:
-        assert closing_references("Fixes #9\n\nA summary.\n") == (9,)
+        assert closing_references("Fixes #9\n\nA summary.\n", SLUG) == (9,)
 
     @pytest.mark.parametrize(
         "keyword",
@@ -60,27 +62,27 @@ class TestClosingReferences:
     def test_every_keyword_in_every_casing_closes(
         self, keyword: str, case: Callable[[str], str]
     ) -> None:
-        assert closing_references(f"{case(keyword)} #9") == (9,)
+        assert closing_references(f"{case(keyword)} #9", SLUG) == (9,)
 
     def test_the_optional_colon_is_valid_syntax(self) -> None:
-        assert closing_references("Closes: #9") == (9,)
+        assert closing_references("Closes: #9", SLUG) == (9,)
 
     def test_a_reference_without_a_keyword_closes_nothing(self) -> None:
-        assert closing_references("Follows on from #9.") == ()
+        assert closing_references("Follows on from #9.", SLUG) == ()
 
     def test_a_keyword_naming_another_issue_reports_only_it(self) -> None:
-        assert closing_references("Fixes #7\n") == (7,)
+        assert closing_references("Fixes #7\n", SLUG) == (7,)
 
     def test_an_empty_body_closes_nothing(self) -> None:
-        assert closing_references("") == ()
+        assert closing_references("", SLUG) == ()
 
     def test_a_backticked_reference_closes_nothing(self) -> None:
-        assert closing_references("Fixes `#9` in passing.") == ()
+        assert closing_references("Fixes `#9` in passing.", SLUG) == ()
 
     def test_a_fenced_reference_closes_nothing(self) -> None:
         body = "A summary.\n\n```\nFixes #9\n```\n"
 
-        assert closing_references(body) == ()
+        assert closing_references(body, SLUG) == ()
 
     def test_a_disposition_table_closes_only_the_live_reference(self) -> None:
         body = (
@@ -91,7 +93,23 @@ class TestClosingReferences:
             "| see `#1503` | no-change | resolves `#1502` already |\n"
         )
 
-        assert closing_references(body) == (9,)
+        assert closing_references(body, SLUG) == (9,)
 
     def test_two_keywords_report_both_in_body_order(self) -> None:
-        assert closing_references("Fixes #9 and closes #7.") == (9, 7)
+        assert closing_references("Fixes #9 and closes #7.", SLUG) == (9, 7)
+
+    def test_a_foreign_slug_reference_closes_nothing(self) -> None:
+        assert closing_references("Fixes upstream/other#1907", SLUG) == ()
+
+    def test_a_same_slug_qualified_reference_closes(self) -> None:
+        assert closing_references("Fixes acme/widgets#9", SLUG) == (9,)
+
+    def test_the_slug_comparison_ignores_case(self) -> None:
+        assert closing_references("Fixes ACME/Widgets#9", SLUG) == (9,)
+
+    def test_the_accepted_numbers_keep_body_order_without_duplicates(self) -> None:
+        body = (
+            "Fixes #9, closes acme/widgets#7, resolves upstream/other#5 and fixes #9."
+        )
+
+        assert closing_references(body, SLUG) == (9, 7)

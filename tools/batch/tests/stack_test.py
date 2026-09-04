@@ -341,6 +341,28 @@ class TestRemove:
 
         assert manager.unpushed("issue-9") is True
 
+    def test_a_commit_only_this_branch_holds_is_flagged(self, sc: Scratch) -> None:
+        """Another branch's own unpushed work does not excuse this branch's."""
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        sibling = manager.ensure_branch("sibling", "main")
+        _ = git(sibling.worktree, "commit", "-q", "--allow-empty", "-m", "elsewhere")
+        slot = manager.ensure(9, "main")
+        _ = git(slot.worktree, "commit", "-q", "--allow-empty", "-m", "agent work")
+
+        assert manager.unpushed("issue-9") is True
+
+    def test_a_commit_a_sibling_local_branch_holds_is_not_flagged(
+        self, sc: Scratch
+    ) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        sc.branch_at("sibling", "main")
+        sc.checkout("sibling")
+        _ = sc.commit("local work")
+
+        _ = manager.ensure_branch("fix-thing", "sibling")
+
+        assert manager.unpushed("fix-thing") is False
+
     def test_a_branch_that_does_not_exist_has_nothing_unpushed(
         self, sc: Scratch
     ) -> None:

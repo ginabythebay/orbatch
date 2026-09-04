@@ -19,15 +19,20 @@ _SPAN = r"`[^`\n]*`"
 _CODE = re.compile(rf"{_FENCE}|{_SPAN}", re.DOTALL)
 
 _KEYWORD = r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b"
-_REFERENCE = r"(?:[\w.-]+/[\w.-]+)?#(\d+)"
+_REFERENCE = r"([\w.-]+/[\w.-]+)?#(\d+)"
 _CLOSING = re.compile(rf"{_KEYWORD}\s*:?\s+{_REFERENCE}", re.IGNORECASE)
 
 
-def closing_references(body: str) -> tuple[int, ...]:
-    """Issue numbers this body closes, as GitHub reads it: keyword then `#n`,
-    ignoring code spans and fenced blocks."""
+def closing_references(body: str, slug: str) -> tuple[int, ...]:
+    """Issue numbers this body closes in `slug`, as GitHub reads it: keyword
+    then `#n`, ignoring code spans and fenced blocks. A reference qualified
+    with another repository closes nothing here."""
     prose = _CODE.sub(" ", body)
-    found = [int(match.group(1)) for match in _CLOSING.finditer(prose)]
+    found = [
+        int(match.group(2))
+        for match in _CLOSING.finditer(prose)
+        if match.group(1) is None or match.group(1).lower() == slug.lower()
+    ]
     return tuple(dict.fromkeys(found))
 
 

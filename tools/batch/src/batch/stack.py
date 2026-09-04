@@ -309,10 +309,24 @@ class StackManager:
         ).stdout.strip()
 
     def unpushed(self, branch: str) -> bool:
-        """False for a branch that does not exist: nothing local is at risk."""
+        """False for a branch that does not exist: nothing local is at risk.
+
+        Commits another local branch also holds came from whatever the branch
+        was cut on top of, so deleting this branch cannot destroy them.
+        """
         if not self._branch_exists(branch):
             return False
-        return bool(self._git("rev-list", branch, "--not", "--remotes"))
+        return bool(
+            self._git(
+                "rev-list",
+                branch,
+                "--not",
+                "--remotes",
+                "--exclude",
+                branch,
+                "--branches",
+            )
+        )
 
     def patch_unique(self, branch: str, base: str) -> bool | None:
         """True when the branch carries a commit whose patch is not already in
