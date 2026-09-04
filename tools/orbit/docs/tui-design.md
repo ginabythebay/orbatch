@@ -188,7 +188,7 @@ Two gotchas encoded in the handlers:
   run and lands on the real node even with the filter on.
 - The roots are the milestone's epics, then — when the milestone has
   any — a trailing `STANDALONE` section holding its standalone issues,
-  so the tree shows what `dev/orbit sprint` prints. The section keys on
+  so the tree shows what `orbit sprint` prints. The section keys on
   `0`, which no issue number takes, and is `children_loaded=True`, so
   expanding it or anything under it can never fetch. It starts expanded
   (its issues are already in hand) unless the user collapsed one that a

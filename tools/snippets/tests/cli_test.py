@@ -811,14 +811,16 @@ class TestCli:
 
 
 class TestMain:
-    def test_help_reports_the_shim_path_as_the_program_name(
+    def test_help_names_the_console_script(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         with pytest.raises(SystemExit) as exit_info:
             main(["--help"])
 
         assert exit_info.value.code == 0
-        assert capsys.readouterr().out.startswith("Usage: dev/snippets.py")
+        out = capsys.readouterr().out
+        assert out.startswith("Usage: snippets")
+        assert "dev/" not in out
 
 
 def _git(args: list[str], cwd: Path) -> None:
