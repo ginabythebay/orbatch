@@ -41,7 +41,7 @@ def manager(sc: Scratch) -> StackManager:
 def vms(sc: Scratch, *, disks: Sequence[Path] = ()) -> VmRunner:
     return VmRunner(
         sc.root,
-        worktree_root=sc.trees,
+        worktree_root=lambda: sc.trees,
         config=batch_config,
         disks=lambda: frozenset(disk.resolve() for disk in disks),
     )
@@ -219,7 +219,10 @@ class TestRacedRemoval:
         result = Reclaimer(
             stack,
             VmRunner(
-                tmp_path, worktree_root=tmp_path, config=batch_config, disks=frozenset
+                tmp_path,
+                worktree_root=lambda: tmp_path,
+                config=batch_config,
+                disks=frozenset,
             ),
             occupied=frozenset,
         ).collect()
@@ -384,7 +387,7 @@ class TestOccupancy:
             raise OccupancyError("ps exited 1")
 
         runner = VmRunner(
-            sc.root, worktree_root=sc.trees, config=batch_config, disks=refuse
+            sc.root, worktree_root=lambda: sc.trees, config=batch_config, disks=refuse
         )
 
         with pytest.raises(OccupancyError):

@@ -155,7 +155,7 @@ class TestStatusVerbose:
         )
 
     def _root(self, tmp_path: Path) -> Path:
-        runner = VmRunner(tmp_path, worktree_root=tmp_path, config=batch_config)
+        runner = VmRunner(tmp_path, worktree_root=lambda: tmp_path, config=batch_config)
         runner.socket(70).touch()
         runner.log(70).touch()
         runner.config_dir(70).mkdir()
@@ -190,7 +190,7 @@ class TestStatusVerbose:
     def test_verbose_surfaces_the_vm_facts_of_the_live_issue(
         self, tmp_path: Path, flag: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        runner = VmRunner(tmp_path, worktree_root=tmp_path, config=batch_config)
+        runner = VmRunner(tmp_path, worktree_root=lambda: tmp_path, config=batch_config)
 
         result = self._invoke(tmp_path, monkeypatch, flag)
 
@@ -739,7 +739,7 @@ class TestVm:
     def _runner(self, tmp_path: Path) -> VmRunner:
         return VmRunner(
             tmp_path,
-            worktree_root=tmp_path,
+            worktree_root=lambda: tmp_path,
             environ={},
             config=batch_config,
             disks=frozenset,
@@ -853,7 +853,7 @@ class TestVm:
 
         runner = VmRunner(
             tmp_path,
-            worktree_root=tmp_path,
+            worktree_root=lambda: tmp_path,
             environ={},
             config=batch_config,
             disks=frozenset,
@@ -1578,7 +1578,7 @@ class TestPlan:
         stack = _planning_stack(monkeypatch, tmp_path)
         branch = _plan_pid(monkeypatch)
         staged = VmRunner(
-            tmp_path, worktree_root=tmp_path, environ={}, config=batch_config
+            tmp_path, worktree_root=lambda: tmp_path, environ={}, config=batch_config
         ).named_config_dir(branch)
         staged.mkdir(parents=True)
 
@@ -1607,7 +1607,7 @@ class TestPlan:
         stack = _planning_stack(monkeypatch, tmp_path)
         branch = _plan_pid(monkeypatch)
         staged = VmRunner(
-            tmp_path, worktree_root=tmp_path, environ={}, config=batch_config
+            tmp_path, worktree_root=lambda: tmp_path, environ={}, config=batch_config
         ).named_config_dir(branch)
 
         def failed(
@@ -1772,10 +1772,13 @@ def _wire(
         return stack
 
     def runner_at(
-        root: Path, *, worktree_root: Path, config: Callable[[], BatchConfig]
+        root: Path,
+        *,
+        worktree_root: Callable[[], Path],
+        config: Callable[[], BatchConfig],
     ) -> FakeRunner:
         built.roots.append(root)
-        built.trees.append(worktree_root)
+        built.trees.append(worktree_root())
         built.configs.append(config())
         return built.runner
 
@@ -1880,9 +1883,20 @@ class TestRunConstruction:
         )
 
         assert result.exit_code == 0, result.output
-        assert built.trees == [
-            StackManager(tmp_path, seed_image=Path(TEST_SEED)).worktree_root
-        ]
+        assert built.trees == [tmp_path.parent / "worktrees"]
+
+    def test_an_omitted_flag_locks_at_the_repo_s_own_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = _wire(monkeypatch, tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        scoped = tmp_path / "home" / ".cache" / "batch" / "acme" / "widgets"
+
+        result = CliRunner().invoke(cli, ["run", str(EPIC)])
+
+        assert result.exit_code == 0, result.output
+        assert built.roots == [scoped]
+        assert (scoped / "run.lock").exists()
 
 
 class TestSkipAndRelaunch:
@@ -2438,7 +2452,7 @@ class TestRunRootScoping:
 
 
 _ROOT_ARGV: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
-    (("status",), ("77",)),
+    (("status",), ("77", "-v")),
     (("vm",), ("status", "77")),
     (("run",), ("77",)),
     (("cleanup",), ("77",)),
@@ -2636,23 +2650,27 @@ class TestAttach:
             ("dtach", "-a", str(tmp_path / "issue-1499.sock"), "-r", "none")
         ]
 
-    def test_attaching_outside_a_checkout_refuses_rather_than_guessing(
+    def test_a_live_vm_is_attached_from_outside_a_checkout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         outside_a_checkout(monkeypatch)
 
         result, seen = self._attached(tmp_path, monkeypatch)
 
-        assert result.exit_code == 1
-        assert "pass --repo" in result.output
-        assert seen == []
+        assert result.exit_code == 0, result.output
+        assert seen == [
+            ("dtach", "-a", str(tmp_path / "issue-1499.sock"), "-r", "none")
+        ]
 
     def test_the_vm_subgroup_no_longer_owns_attach(self, tmp_path: Path) -> None:
         result = CliRunner().invoke(
             cli,
             ["vm", "attach", "1499"],
             obj=VmRunner(
-                tmp_path, worktree_root=tmp_path, environ={}, config=batch_config
+                tmp_path,
+                worktree_root=lambda: tmp_path,
+                environ={},
+                config=batch_config,
             ),
         )
 

@@ -134,15 +134,22 @@ def _targets_arg(f: FC) -> FC:
 
 _CONFIG_KEY = "batch.config"
 _REPO_KEY = "batch.repo"
+_MAIN_REPO_KEY = "batch.main_repo"
 
 
 def _main_repo(ctx: click.Context) -> Path:
+    """Cached: `main_repo` shells out, and a poll loop asks once per status."""
+    cached = ctx.meta.get(_MAIN_REPO_KEY)
+    if isinstance(cached, Path):
+        return cached
     try:
-        return main_repo(cast("Path | None", ctx.meta.get(_REPO_KEY)))
+        found = main_repo(cast("Path | None", ctx.meta.get(_REPO_KEY)))
     except subprocess.CalledProcessError as exc:
         raise click.ClickException(
             "Not inside a git checkout; run batch from the repository or pass --repo."
         ) from exc
+    ctx.meta[_MAIN_REPO_KEY] = found
+    return found
 
 
 def _resolve_config(ctx: click.Context) -> BatchConfig:
@@ -185,7 +192,7 @@ def _run_root(ctx: click.Context, run_root: Path) -> Path:
 def _runner(ctx: click.Context, root: Path) -> VmRunner:
     return VmRunner(
         root,
-        worktree_root=worktree_root(_main_repo(ctx)),
+        worktree_root=lambda: worktree_root(_main_repo(ctx)),
         config=lambda: _resolve_config(ctx),
     )
 
@@ -313,9 +320,10 @@ def status(
 ) -> None:
     """Show every batch issue the targets name, in stack order."""
     ctx = click.get_current_context()
-    root = _run_root(ctx, run_root)
     batch = state.batch(targets)
-    facts = _vm_facts(batch, _runner(ctx, root)) if verbose else None
+    facts = (
+        _vm_facts(batch, _runner(ctx, _run_root(ctx, run_root))) if verbose else None
+    )
     print_batch_table(batch, sys.stdout, facts, prog=_prog(ctx))
 
 

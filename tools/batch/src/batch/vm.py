@@ -317,9 +317,8 @@ def disks_in_use(text: str) -> frozenset[Path]:
     """The `.raw` paths named as a whole argv token in `ps -Ao args=` output.
 
     Whole tokens only: substring matching would let a live `plan-133` hold its
-    unrelated neighbour `plan-13` hostage. Resolved paths, not basenames: disks
-    live under each repository's own worktree root, and two repositories name
-    their slots alike.
+    unrelated neighbour `plan-13` hostage. Whole paths, because two repositories
+    name their slots alike.
     """
     return frozenset(
         Path(token).resolve()
@@ -334,7 +333,7 @@ class VmRunner:
         self,
         root: Path = DEFAULT_RUN_ROOT,
         *,
-        worktree_root: Path,
+        worktree_root: Callable[[], Path],
         config: Callable[[], BatchConfig],
         environ: Mapping[str, str] | None = None,
         disks: Callable[[], frozenset[Path]] | None = None,
@@ -342,7 +341,7 @@ class VmRunner:
         account: GuestAccount | None = None,
     ) -> None:
         self._root: Path = root.expanduser()
-        self._worktree_root: Path = worktree_root
+        self._worktree_root: Callable[[], Path] = worktree_root
         self._config: Callable[[], BatchConfig] = config
         self._environ: Mapping[str, str] = os.environ if environ is None else environ
         self._disks: Callable[[], frozenset[Path]] = disks or _running_disks
@@ -455,7 +454,7 @@ class VmRunner:
         socket = self._root / f"{branch}.sock"
         if socket.exists():
             return VmStatus.RUNNING
-        disk = (self._worktree_root / f"{branch}.raw").resolve()
+        disk = (self._worktree_root() / f"{branch}.raw").resolve()
         return VmStatus.RUNNING if disk in self._disks() else VmStatus.EXITED
 
     def claim_path(self, branch: str) -> Path:

@@ -368,3 +368,43 @@ convention instead).
 Notes for next iteration: no exemption list remains anywhere in the guard. A
 new workspace member must ship `src/` layout or the portability suite goes
 red before its first module is even swept.
+
+## 2026-09-04 — issue #21 repo-scoped run root
+
+https://github.com/ginabythebay/orbatch/issues/21
+
+Decisions:
+- Issue's design taken: `scoped_run_root(base, slug)` -> `base/<owner>/<name>`,
+  and `cli._run_root(ctx, run_root)` applies it only when
+  `ctx.get_parameter_source("run_root") is ParameterSource.DEFAULT`. All 11
+  run-root commands (8 option declarations; `_recovery_root_option` covers
+  four) route through it.
+- `disks_in_use` returns resolved `Path`s, not basenames; `status_branch`
+  compares `(worktree_root / f"{branch}.raw").resolve()`. Whole-token rule kept.
+- `stack.worktree_root(repo)` is the one derivation; `StackManager` defaults
+  through it (its ctor kwarg renamed `worktree_root` -> `worktrees` to stop
+  shadowing the module function) and `cli._runner` passes it to `VmRunner`.
+- `VmRunner`'s worktree root is a **callable**, not a `Path` (review round 1).
+  Eager resolution made `attach`/`vm status` demand a checkout even with an
+  explicit `--run-root`, which the mount-root callers do not have. `_main_repo`
+  is now cached on `ctx.meta` so a poll loop does not re-shell `git rev-parse`.
+- Two behaviour losses stand: `batch vm status`/`batch status` of an *exited*
+  VM from outside a checkout now refuse with "pass --repo". Proving EXITED
+  means proving no live disk names this repo's slot, which needs the worktree
+  root. Attaching over a live socket is unaffected.
+- `status` resolves the root only under `-v`; a non-verbose `batch status`
+  still runs without a readable `batch.toml`.
+
+Files: tools/batch/src/batch/{vm,cli,stack}.py,
+tools/batch/src/batch/testing/payloads.py, tests in
+{vm,cli,stack,reclaim,lock,teardown,verbs,worktree,completion}_test.py.
+
+Review: six findings, all fixed (table in the PR body). Round 1 caught the
+eager-repo regression and three tests that mirrored the diff rather than
+pinning wiring; the sweep now has one non-stubbed case driving `run` with the
+flag omitted, verified red by mutating `scoped_run_root`.
+
+Notes for next iteration: no migration for existing flat `~/.cache/batch`
+contents — a run in flight across the upgrade is orphaned, not corrupted.
+Whether one host can actually boot two repos' VMs at once is unverified; the
+issue names an explicit slot budget as the separate follow-up if not.

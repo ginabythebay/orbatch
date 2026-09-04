@@ -248,7 +248,7 @@ class TestFakeStackHonoursUnpushed:
 
 class TestLabelAndConfigDir:
     def test_the_config_dir_goes_and_the_log_stays(self, tmp_path: Path) -> None:
-        runner = VmRunner(tmp_path, worktree_root=tmp_path, config=batch_config)
+        runner = VmRunner(tmp_path, worktree_root=lambda: tmp_path, config=batch_config)
         runner.config_dir(10).mkdir(parents=True)
         _ = runner.log(10).write_text("console output\n")
         state = FakeState(batch_issue(10, BatchLabel.READY_FOR_REVIEW))

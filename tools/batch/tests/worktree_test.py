@@ -369,7 +369,9 @@ class TestAgreementWithTheConsole:
                 *flags,
             ],
             obj=VmRunner(
-                Path("run"), worktree_root=Path("worktrees"), config=batch_config
+                Path("run"),
+                worktree_root=lambda: Path("worktrees"),
+                config=batch_config,
             ),
         )
 
