@@ -38,6 +38,47 @@ Notes for next iteration: `#9` is the real follow-up. `gh label create
 milestones at all, so the new issue got none despite `.orbit.toml`
 `current = "import"`.
 
+## 2026-09-04 — issue #9 teardown reclaims squash-landed slots
+
+https://github.com/ginabythebay/orbatch/issues/9
+
+Decisions:
+- Issue's design: option 2's predicate (patch identity) through option 1's
+  plumbing (merged verdict travels down). `Teardown` gains `base` (default
+  `origin/main`, new `order.ORIGIN_MAIN`) and passes `merged_base=` to
+  `StackManager.remove`. Reclaim and `batch stack remove` untouched: neither
+  has a merged verdict to justify the loosening.
+- `merged_base` NARROWS, never swaps: `_retains_work` refuses only when
+  `unpushed(branch)` AND `patch_unique(...) is not False`. Review round 1
+  caught the swap — it refused a branch merged into an open predecessor
+  (commits on `origin/issue-N`) and one absent from a stale `origin/main`.
+- `git cherry` alone is not enough: per-commit patch ids miss a squash of a
+  multi-commit branch (this repo's own PR shape). `_landed_whole` compares the
+  branch's aggregate patch id (`git diff fork..branch | git patch-id`) against
+  the patch ids of `fork..base`.
+- Porcelain output is pinned (`--no-ext-diff --no-color --pretty=medium`,
+  `check=False`) — repo-agnostic tools inherit the user's git config, and
+  `diff.external` would otherwise silently reinstate the leak.
+- `patch_unique` is tri-state: False (nothing unique), True (carries its own),
+  None (cannot compare — no base, no shared history) -> caller falls back to
+  strict `unpushed`. Failure direction stays conservative.
+
+Files: tools/batch/src/batch/{stack,teardown,order}.py,
+tools/batch/src/batch/testing/{payloads,scratch}.py,
+tools/batch/tests/{stack,teardown,reclaim,cli}_test.py. `Scratch` gained
+commit_files/commit_file/push/land/merge/forget_origin/unpublish; `FakeStack`
+gained a `patch_unique` set, `merged_bases`, and mirrors the real conjunction.
+
+Review: two rounds, nine findings, all fixed (see PR body table). Round 1
+found the swap-vs-narrow regression and the multi-commit squash gap — both
+were real bugs in the first cut. Round 2 found the unpinned git output, the
+fake diverging from the real predicate, and an untested `None` arm.
+
+Notes for next iteration: no production code in `tools/batch` fetches, so
+`origin/main` can be stale; the narrowing makes that harmless, but a sweep
+still cannot see a merge that only exists upstream. If slots ever leak again,
+check `unpushed` first — it is the gate patch identity only narrows.
+
 ## 2026-09-04 — issue #18 vwt as a repo-agnostic command
 
 https://github.com/ginabythebay/orbatch/issues/18
@@ -66,8 +107,10 @@ Decisions:
   UNPUSHED_COMMITS can no longer fire (reclaim only reaches it once the branch
   is an ancestor of local `main`, which then holds every commit). Slots cut
   from unpushed work `main` still holds are now reclaimed — correct, but it
-  rewrote `reclaim_test.py`'s unpushed test. Left the pre-check standing;
-  filed `#22`.
+  rewrote `reclaim_test.py`'s unpushed test. Merging `#9` after the review
+  brought a second one — `test_a_squash_landed_branch_is_left_alone`, whose
+  local merge into `main` is what makes the commits safe — flipped the same
+  way. Left the pre-check standing; filed `#22`.
 
 Files: tools/batch/src/batch/worktree.py (new),
 tools/batch/src/batch/stack.py, tools/batch/pyproject.toml,
