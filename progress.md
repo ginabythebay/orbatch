@@ -78,3 +78,42 @@ Notes for next iteration: no production code in `tools/batch` fetches, so
 `origin/main` can be stale; the narrowing makes that harmless, but a sweep
 still cannot see a merge that only exists upstream. If slots ever leak again,
 check `unpushed` first — it is the gate patch identity only narrows.
+
+## 2026-09-04 — issue #15 console-script program names
+
+https://github.com/ginabythebay/orbatch/issues/15
+
+Decisions:
+- `PROG_NAME` for orbit / review-diff / review-html / snippets now the
+  installed console-script names, per the issue: user-visible usage output
+  and generated completions stop naming the extraction repo's `dev/`
+  wrappers.
+- orbit: `PROG_NAME == SCRIPT_NAME` made `source_with_alias` a permanent
+  no-op, so orbit drops the call, `SCRIPT_NAME`, and — on this base, which
+  predates `#6`'s `packages/shellcomp` — the whole `orbit/completion.py`
+  module. batch keeps its own copy and its live alias case.
+- `Bash(*dev/lint*)` -> `Bash(*lint*)` in review's DISALLOWED_TOOLS.
+- Test plan item 8 assumed the snippets module docstring is click's epilog.
+  It is not (bare `@click.command()`, no `epilog=`), so the docstring is
+  asserted directly instead of through `--help`. Did not add `epilog=__doc__`
+  — that changes help output beyond the rename.
+- Test plan item 1 (drop `_COMMAND_PATH_EXEMPT`) NOT DONE — see blockers.
+
+Files: tools/orbit/src/orbit/cli.py, tools/orbit/src/orbit/completion.py
+(deleted), tools/review/src/review/{cli,html}.py,
+tools/snippets/src/snippets/cli.py, tests in orbit/review/snippets,
+tools/orbit/docs/tui-design.md.
+
+Review: four findings. Fixed the vacuous snippets `dev/` assertion and a
+false comment in orbit's completion fixture. Declined two: the missing
+workspace sweep (blocked, filed as `#19`) and the `dev/`-absence assertion
+in review's cli_test (today the only guard for that string; `#19` removes
+it when the sweep lands).
+
+Blockers / notes: this branch is on the `#2`->`#9` stack off main;
+`packages/portability` and `_COMMAND_PATH_EXEMPT` live on the unmerged
+`#3`->`#7` stack. So nothing sweeps `tools/*/src` for `dev/` here, and the
+renames rest on hand-written usage-line assertions. `#19` tracks dropping
+the exemption once both stacks land. Expect conflicts merging with `#7`:
+it moves `orbit/completion.py` to `packages/shellcomp` while this deletes
+it, and both touch `orbit/cli.py`'s import block.
