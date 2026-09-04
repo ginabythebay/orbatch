@@ -88,9 +88,6 @@ class CountingStack:
     def dirty(self, branch: str) -> bool:
         return self._inner.dirty(branch)
 
-    def unpushed(self, branch: str) -> bool:
-        return self._inner.unpushed(branch)
-
     def checked_out(self, branch: str) -> str | None:
         return self._inner.checked_out(branch)
 
@@ -152,7 +149,7 @@ class TestReclaim:
     def test_a_squash_landed_branch_main_has_merged_is_reclaimed(
         self, sc: Scratch
     ) -> None:
-        """`_unsafe` is only reached once the branch is an ancestor of `main`,
+        """Removal is only attempted once the branch is an ancestor of `main`,
         which is what puts its commits somewhere the removal cannot take them."""
         slot = manager(sc).ensure(9, "main")
         _ = sc.commit_file(slot.worktree, "feature.txt", "the work\n", "agent work")
@@ -195,10 +192,6 @@ class RacingStack:
         return True
 
     def dirty(self, branch: str) -> bool:
-        del branch
-        return False
-
-    def unpushed(self, branch: str) -> bool:
         del branch
         return False
 
