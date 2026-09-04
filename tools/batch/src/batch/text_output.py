@@ -175,7 +175,9 @@ def print_batch_table(
         for issue in batch.issues:
             style = _STATE_STYLES[issue.state]
             table.add_row(
-                f"#{issue.number}", f"[{style}]{issue.state}[/{style}]", issue.title
+                f"#{issue.number}",
+                f"[{style}]{issue.state}[/{style}]",
+                escape(issue.title),
             )
         console = Console(file=out, highlight=False)
         console.print(table)

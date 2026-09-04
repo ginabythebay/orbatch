@@ -11,6 +11,8 @@ Issue and batch tooling.
 | `tools/review` | `review-diff`, `review-html` | Fresh-eyes code review over a diff or PR |
 | `tools/snippets` | `snippets` | Per-epic activity and accomplishment rollups |
 | `packages/ghgql` | — | Shared GitHub GraphQL transport and repo detection |
+| `packages/portability` | — | Digests of the repos orbatch was extracted from, and the guard that keeps them out |
+| `packages/shellcomp` | — | Shared bash-completion helper for the click CLIs |
 
 ## Layout
 
@@ -54,10 +56,10 @@ the Grafana annotation tag to count.
 
 ```toml
 [[repo]]
-path = "~/Source/vpink/orbatch"
+path = "~/Source/example/orbatch"
 
 [[repo]]
-path = "~/Source/vpink/pinky"
+path = "~/Source/example/widget"
 deploy_tag = "deploy"
 ```
 

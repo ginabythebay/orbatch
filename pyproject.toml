@@ -8,7 +8,9 @@ dependencies = [
     "batch",
     "ghgql",
     "orbit",
+    "portability",
     "review",
+    "shellcomp",
     "snippets",
 ]
 
@@ -34,7 +36,9 @@ members = ["packages/*", "tools/*"]
 batch = { workspace = true }
 ghgql = { workspace = true }
 orbit = { workspace = true }
+portability = { workspace = true }
 review = { workspace = true }
+shellcomp = { workspace = true }
 snippets = { workspace = true }
 
 [tool.pyright]
@@ -69,7 +73,7 @@ pythonpath = ["."]
 # silently drop the slow tests. Local runs deselect them in conftest.py
 # (pytest_collection_modifyitems); pass --slow to include them.
 addopts = "--import-mode=importlib --dist worksteal"
-testpaths = ["tests", "packages/ghgql/tests", "tools/batch/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
+testpaths = ["tests", "packages/ghgql/tests", "packages/portability/tests", "packages/shellcomp/tests", "tools/batch/tests", "tools/orbit/tests", "tools/review/tests", "tools/snippets/tests"]
 tmp_path_retention_policy = "failed"
 filterwarnings = [
     "error",

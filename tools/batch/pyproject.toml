@@ -5,6 +5,7 @@ requires-python = "==3.13.*"
 dependencies = [
     "click>=8.5",
     "ghgql",
+    "shellcomp",
     "pydantic>=2.0",
     "requests>=2.32.0",
     "rich>=14.0",

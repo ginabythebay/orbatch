@@ -77,7 +77,7 @@ Often `jq` will do instead.
 
 ## Architecture
 
-A uv workspace of five packages:
+A uv workspace of seven packages:
 
 - `tools/batch` — drives agent VMs over a stack of issues (`batch`),
   or over a single branch (`vwt`)
@@ -88,6 +88,9 @@ A uv workspace of five packages:
 - `tools/snippets` — per-epic activity and accomplishment rollups
   (`snippets`)
 - `packages/ghgql` — shared GitHub GraphQL transport and repo detection
+- `packages/portability` — digests of the repositories orbatch was
+  extracted from, and the workspace-wide guard that keeps them out
+- `packages/shellcomp` — shared click shell-completion helper
 
 Members depend on each other through `[tool.uv.sources]` in the root
 `pyproject.toml`, never by relative path, so a checkout resolves without
