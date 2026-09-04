@@ -1,18 +1,10 @@
 [project]
-name = "orbit"
+name = "shellcomp"
 version = "0.1.0"
 requires-python = "==3.13.*"
 dependencies = [
     "click>=8.5",
-    "pydantic>=2.0",
-    "ghgql",
-    "shellcomp",
-    "rich>=14.0",
-    "textual>=8.2.7",
 ]
-
-[project.scripts]
-orbit = "orbit.cli:main"
 
 [build-system]
 requires = ["hatchling"]
