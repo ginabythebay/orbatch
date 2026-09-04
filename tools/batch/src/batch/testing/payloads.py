@@ -554,8 +554,10 @@ class FakeStack:
                 TeardownSkip.DIRTY_WORKTREE,
                 "the worktree has local changes",
             )
-        retained = self._patch_unique if merged_base is not None else self._unpushed
-        if branch in retained:
+        retained = branch in self._unpushed and (
+            merged_base is None or branch in self._patch_unique
+        )
+        if retained:
             raise UnsafeRemovalError(
                 branch,
                 TeardownSkip.UNPUSHED_COMMITS,

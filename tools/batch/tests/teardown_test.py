@@ -154,6 +154,7 @@ class TestSafety:
         h = harness(
             batch_issue(10, BatchLabel.READY_FOR_REVIEW),
             root=tmp_path,
+            unpushed=("issue-10",),
             patch_unique=("issue-10",),
         )
 
@@ -226,6 +227,24 @@ class TestFakeStackHonoursUnpushed:
 
         assert stack.removed == [10]
 
+    def test_a_merged_base_only_narrows_the_refusal(self, tmp_path: Path) -> None:
+        stack = FakeStack(tmp_path, unpushed=("issue-10",), patch_unique=("issue-11",))
+
+        _ = stack.remove(10, merged_base="origin/main")
+        _ = stack.remove(11, merged_base="origin/main")
+
+        assert stack.removed == [10, 11]
+
+    def test_a_merged_base_still_refuses_what_both_signals_flag(
+        self, tmp_path: Path
+    ) -> None:
+        stack = FakeStack(tmp_path, unpushed=("issue-10",), patch_unique=("issue-10",))
+
+        with pytest.raises(UnsafeRemovalError) as caught:
+            _ = stack.remove(10, merged_base="origin/main")
+
+        assert caught.value.skip is TeardownSkip.UNPUSHED_COMMITS
+
 
 class TestLabelAndConfigDir:
     def test_the_config_dir_goes_and_the_log_stays(self, tmp_path: Path) -> None:
@@ -257,6 +276,7 @@ class TestLabelAndConfigDir:
         h = harness(
             batch_issue(10, BatchLabel.READY_FOR_REVIEW),
             root=tmp_path,
+            unpushed=("issue-10",),
             patch_unique=("issue-10",),
         )
 

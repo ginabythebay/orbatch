@@ -389,6 +389,24 @@ class TestRemoveAfterMerge:
         assert result.removed_branch
         assert result.removed_disk
 
+    def test_a_multi_commit_squash_survives_an_external_diff_driver(
+        self, sc: Scratch
+    ) -> None:
+        _ = git(sc.repo, "config", "diff.external", "false")
+        _ = git(sc.repo, "config", "format.pretty", "oneline")
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        _ = sc.commit_file(slot.worktree, "notes.md", "why\n", "docs: notes")
+        sc.push("issue-9", slot.worktree)
+        _ = sc.land({FEATURE: FEATURE_TEXT, "notes.md": "why\n"}, "agent work (#9)")
+        sc.unpublish("issue-9")
+
+        result = manager.remove(9, merged_base="origin/main")
+
+        assert not slot.worktree.exists()
+        assert result.removed_branch
+
     def test_a_multi_commit_branch_landed_as_one_squash_is_removed(
         self, sc: Scratch
     ) -> None:
@@ -518,6 +536,14 @@ class TestPatchUnique:
         _ = sc.commit_file(slot.worktree, "extra.txt", "unsent\n", "rework")
 
         assert manager.patch_unique("issue-9", "origin/main") is True
+
+    def test_a_base_that_does_not_resolve_answers_nothing(self, sc: Scratch) -> None:
+        manager = StackManager(sc.repo, seed_image=sc.seed)
+        slot = manager.ensure(9, "main")
+        _ = sc.commit_file(slot.worktree, FEATURE, FEATURE_TEXT, "agent work")
+        sc.forget_origin()
+
+        assert manager.patch_unique("issue-9", "origin/main") is None
 
     def test_a_branch_that_does_not_exist_carries_nothing(self, sc: Scratch) -> None:
         manager = StackManager(sc.repo, seed_image=sc.seed)

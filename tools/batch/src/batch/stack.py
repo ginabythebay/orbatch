@@ -319,7 +319,8 @@ class StackManager:
         `base`, so a squash of it onto `base` reads as carrying nothing.
 
         False for a branch that does not exist, matching `unpushed`. None when
-        `base` does not resolve, which is no answer at all: a caller weighing
+        the two cannot be compared at all — no such base, no shared history, a
+        git that would not answer — which is no answer at all: a caller weighing
         safety must fall back to `unpushed`.
         """
         if not self._branch_exists(branch):
@@ -330,17 +331,38 @@ class StackManager:
             return None
         if not any(line.startswith("+") for line in cherry.stdout.splitlines()):
             return False
-        return not self._landed_whole(fork.stdout.strip(), branch, base)
+        landed = self._landed_whole(fork.stdout.strip(), branch, base)
+        return None if landed is None else not landed
 
-    def _landed_whole(self, fork_point: str, branch: str, base: str) -> bool:
+    def _landed_whole(self, fork_point: str, branch: str, base: str) -> bool | None:
         """Whether the branch's commits reached `base` collapsed into one, which
         per-commit patch identity cannot see: a squash merge of more than one
-        commit matches none of them."""
-        whole = self._patch_ids(self._run("diff", f"{fork_point}..{branch}").stdout)
-        landed = self._patch_ids(
-            self._run("log", "--patch", "--no-color", f"{fork_point}..{base}").stdout
+        commit matches none of them.
+
+        The flags pin porcelain output to a form `git patch-id` can read: these
+        tools run in whatever repo the user is in, and an external diff driver
+        or a configured pretty format would otherwise answer for git.
+        """
+        whole = self._run(
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+            f"{fork_point}..{branch}",
+            check=False,
         )
-        return bool(whole) and whole[0] in landed
+        history = self._run(
+            "log",
+            "--patch",
+            "--no-ext-diff",
+            "--no-color",
+            "--pretty=medium",
+            f"{fork_point}..{base}",
+            check=False,
+        )
+        if whole.returncode != 0 or history.returncode != 0:
+            return None
+        ids = self._patch_ids(whole.stdout)
+        return bool(ids) and ids[0] in self._patch_ids(history.stdout)
 
     def _patch_ids(self, patches: str) -> tuple[str, ...]:
         listed = subprocess.run(
