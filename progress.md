@@ -37,3 +37,30 @@ Notes for next iteration: `#9` is the real follow-up. `gh label create
 "found in review"` was needed — the label did not exist. This repo has no
 milestones at all, so the new issue got none despite `.orbit.toml`
 `current = "import"`.
+
+## 2026-09-03 — issue #3 escape issue titles in print_batch_table
+
+https://github.com/ginabythebay/orbatch/issues/3
+
+Decisions:
+- One-line fix: `escape(issue.title)` in `print_batch_table`, matching
+  `_issue_row`. Not `markup=False` on the Console — the adjacent state cell
+  relies on markup for its color.
+- Audit confirmed (correctness lens agreed): that call site is the only
+  GitHub-sourced string reaching a rich renderer in `tools/batch/src`.
+  Everything else writes to the raw `TextIO` or goes through `Text`.
+- Test plan case 4 (table/dashboard agree) written as a real comparison via
+  a `_title_cell` helper, not two substring checks — see review below.
+
+Files: tools/batch/src/batch/text_output.py,
+tools/batch/tests/text_output_test.py (new `TestBatchTableTitleMarkup`,
+4 cases + `_title_cell`).
+
+Review: two merged findings, both minor, both fixed. (1) case 4 duplicated
+existing coverage instead of comparing the two paths — now extracts and
+compares the title cells. (2) case 1 asserted only `[/tmp]`, not the whole
+title — now asserts the full string. Correctness lens: no findings.
+
+Notes for next iteration: `#9` (from `#2`'s review) is still the open
+follow-up. `_title_cell` splits the first rendered line on the state word;
+it works because both renders put the title last and elapsed defaults to "".
