@@ -25,22 +25,22 @@ class TestLoadRepos:
             path = "/src/orbatch"
 
             [[repo]]
-            path = "/src/pinky"
+            path = "/src/widget"
             deploy_tag = "deploy"
             """,
         )
         assert load_repos(path) == (
             RepoSpec(path=Path("/src/orbatch")),
-            RepoSpec(path=Path("/src/pinky"), deploy_tag="deploy"),
+            RepoSpec(path=Path("/src/widget"), deploy_tag="deploy"),
         )
 
     def test_expands_a_home_relative_path(self, tmp_path: Path) -> None:
-        path = _written(tmp_path, '[[repo]]\npath = "~/Source/pinky"\n')
+        path = _written(tmp_path, '[[repo]]\npath = "~/Source/widget"\n')
         specs = load_repos(path)
         assert specs is not None
         (spec,) = specs
         assert not str(spec.path).startswith("~")
-        assert spec.path.name == "pinky"
+        assert spec.path.name == "widget"
 
     def test_reports_every_problem_at_once(self, tmp_path: Path) -> None:
         path = _written(
@@ -56,12 +56,12 @@ class TestLoadRepos:
         )
 
     def test_an_unknown_key_is_a_problem(self, tmp_path: Path) -> None:
-        path = _written(tmp_path, '[[repo]]\npath = "/src/pinky"\ndeploy = "yes"\n')
+        path = _written(tmp_path, '[[repo]]\npath = "/src/widget"\ndeploy = "yes"\n')
         with pytest.raises(ConfigError, match='unknown key "deploy"'):
             _ = load_repos(path)
 
     def test_an_empty_deploy_tag_is_a_problem(self, tmp_path: Path) -> None:
-        path = _written(tmp_path, '[[repo]]\npath = "/src/pinky"\ndeploy_tag = ""\n')
+        path = _written(tmp_path, '[[repo]]\npath = "/src/widget"\ndeploy_tag = ""\n')
         with pytest.raises(ConfigError, match='empty "deploy_tag"'):
             _ = load_repos(path)
 
@@ -72,7 +72,7 @@ class TestLoadRepos:
 
     def test_a_non_list_repo_key_is_reported(self, tmp_path: Path) -> None:
         with pytest.raises(ConfigError, match=r"must be a list of \[\[repo\]\] tables"):
-            _ = load_repos(_written(tmp_path, 'repo = "/src/pinky"\n'))
+            _ = load_repos(_written(tmp_path, 'repo = "/src/widget"\n'))
 
     def test_a_non_table_entry_is_reported(self, tmp_path: Path) -> None:
         with pytest.raises(ConfigError, match=r"repo #1 must be a \[\[repo\]\] table"):

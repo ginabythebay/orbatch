@@ -159,3 +159,47 @@ move dropped the module from batch's portability guard — that test now sweeps
 Notes for next iteration: `#9` (from `#2`'s review) still open. Anything that
 `batch.cli` calls but does not live under `tools/batch/src` needs adding to
 `portability_test._SOURCES` by hand — there is no automatic sweep of deps.
+
+## 2026-09-03 — issue #7 scrub host-repo names, widen the portability guard
+
+https://github.com/ginabythebay/orbatch/issues/7
+
+Decisions:
+- New workspace member `packages/portability`: `names.py` holds the two
+  host-repo names base64-encoded plus their published SHA-256 `DIGESTS`, and
+  `tests/portability_test.py` is the workspace guard. A member, not a root
+  `tests/` module, so `tools/review/tests` can import it by declared
+  dependency rather than by path (CLAUDE.md Architecture).
+- `tools/batch/tests/portability_test.py` deleted. **`_SOURCES` no longer
+  exists**: the sweep is automatic over `git ls-files --cached --others
+  --exclude-standard`, so a new package or file needs no hand-registration.
+  (Supersedes the note at the end of the #6 entry.)
+- Names matched by substring on the lowercased text, not by token. The issue
+  designed a `[^a-z0-9-]+` tokenizer; review showed that regressed both
+  guards it replaces (`<name>-tools`, `v<name>` escape it). See review below.
+- `DIGESTS` kept and pinned in `names_test.py` to the digests the issue
+  published, so the encoded literals cannot drift from the real names.
+- `dev/` half kept but scoped by an exemption list: orbit, review and
+  snippets still carry `dev/` PROG_NAMEs (user-visible), filed as `#15`.
+- Fixtures renamed to `widget`; `orbatch` < `widget` preserves the two
+  ordering assertions at snippets `cli_test.py:589` and `:750`.
+- Review's `_REPO_SPECIFIC` drops its literal entry and routes through
+  `forbidden_words` via a shared `_repo_specific` helper, tested by planting
+  a name in a template text.
+
+Files: packages/portability/** (new), pyproject.toml, uv.lock, README.md,
+CLAUDE.md, tools/review/{pyproject.toml,tests/cli_test.py},
+tools/snippets/tests/{cli_test.py,config_test.py},
+tools/batch/tests/portability_test.py (deleted).
+
+Review: 8 merged findings, 7 fixed, 1 declined (store digests only, no
+recoverable form — declined because test-plan item 3 needs a real name to
+plant, and the reviewer's test-local-digest alternative is the very hole
+item 3 closes). Full table in the PR body.
+
+Notes for next iteration: `#9` and `#15` are the open follow-ups. Issue #7's
+"Final step" asks that the issue be replaced by a closed copy and then
+`gh issue delete 7` — **after** the PR merges and batch's teardown sweep
+finishes. Not done here; left to whoever merges, and flagged in the PR
+caveats. progress.md is scanned by the new guard, so never spell the names
+here.

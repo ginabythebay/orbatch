@@ -14,6 +14,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from orbit.core import NO_BROWSER_VAR
+from portability.names import NAMES, forbidden_words
 from review.cli import (
     ALLOWED_TOOLS,
     DISALLOWED_TOOLS,
@@ -648,8 +649,14 @@ _REPO_SPECIFIC = (
     "apps/figaro",
     "ruff",
     "basedpyright",
-    "pinky",
 )
+
+
+def _repo_specific(text: str) -> list[str]:
+    lowered = text.lower()
+    return [
+        identifier for identifier in _REPO_SPECIFIC if identifier.lower() in lowered
+    ] + sorted(forbidden_words(text))
 
 
 class TestTemplates:
@@ -660,9 +667,11 @@ class TestTemplates:
     def test_no_template_names_a_particular_repository(self) -> None:
         for name, text in all_templates().items():
             assert text == template(*name.split("/")), name
-            lowered = text.lower()
-            for identifier in _REPO_SPECIFIC:
-                assert identifier.lower() not in lowered, f"{name}: {identifier}"
+            assert _repo_specific(text) == [], name
+
+    @pytest.mark.parametrize("name", NAMES, ids=("plain", "hyphenated"))
+    def test_a_template_naming_a_host_repo_is_refused(self, name: str) -> None:
+        assert _repo_specific(f"Review the changes in {name}.\n") == [name]
 
     def test_the_enumerator_covers_every_template_on_disk(self) -> None:
         root = Path(str(resources.files("review").joinpath("templates")))

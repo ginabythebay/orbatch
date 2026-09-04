@@ -8,6 +8,11 @@ dependencies = [
     "orbit",
 ]
 
+[dependency-groups]
+dev = [
+    "portability",
+]
+
 [project.scripts]
 review-diff = "review.cli:main"
 review-html = "review.html:main"
