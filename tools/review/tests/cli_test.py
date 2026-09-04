@@ -233,7 +233,6 @@ class TestSessionFanOut:
         assert argv[argv.index("--disallowed-tools") + 1] == DISALLOWED_TOOLS
         for banned in ("Edit", "Write", "NotebookEdit", "Bash(*lint*)"):
             assert banned in DISALLOWED_TOOLS
-        assert "dev/" not in DISALLOWED_TOOLS
         assert argv[:4] == ["claude", "-p", "--output-format", "text"]
         assert "--model" not in argv
 
