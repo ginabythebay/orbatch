@@ -1,12 +1,12 @@
 """What happened over a period — epics, PRs, commits, deploys, docs — for snippets.
 
 Usage:
-    dev/snippets.py
-    dev/snippets.py yesterday
-    dev/snippets.py 'last week'
-    dev/snippets.py 'last 7 days'
-    dev/snippets.py February
-    dev/snippets.py 'April 1-15'
+    snippets
+    snippets yesterday
+    snippets 'last week'
+    snippets 'last 7 days'
+    snippets February
+    snippets 'April 1-15'
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from orbit.github.client import github_client
 from orbit.github.models import MilestoneSummary, PeriodIssue, PeriodPR
 from snippets.config import ConfigError, RepoSpec, config_path, load_repos
 
-PROG_NAME = "dev/snippets.py"
+PROG_NAME = "snippets"
 
 MAX_WIDTH = 80
 

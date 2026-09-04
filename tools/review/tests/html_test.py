@@ -185,3 +185,12 @@ class TestBadInput:
         assert str(missing) in result.stderr
         assert "Traceback" not in result.stderr
         assert not out.exists()
+
+
+def test_help_names_the_console_script() -> None:
+    done = subprocess.run(
+        [*_COMMAND, "--help"], capture_output=True, text=True, check=False
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith("Usage: review-html")

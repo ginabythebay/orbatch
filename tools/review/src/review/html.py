@@ -13,7 +13,7 @@ from markdown_it.token import Token
 
 from orbit.core import open_url
 
-PROG_NAME: Final = "dev/review-html.py"
+PROG_NAME: Final = "review-html"
 
 _PER_LENS_HEADING = "Per-lens reports"
 _SEVERITIES = ("blocking", "should-fix", "minor")

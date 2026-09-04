@@ -33,6 +33,7 @@ from review.cli import (
     template,
 )
 from review.cli import cli as review_cli
+from review.cli import main as review_main
 
 _HEAD_SHA = "abc1234"
 _PR_HEAD = "head1234beef"
@@ -230,8 +231,9 @@ class TestSessionFanOut:
 
         assert argv[argv.index("--allowed-tools") + 1] == ALLOWED_TOOLS
         assert argv[argv.index("--disallowed-tools") + 1] == DISALLOWED_TOOLS
-        for banned in ("Edit", "Write", "NotebookEdit"):
+        for banned in ("Edit", "Write", "NotebookEdit", "Bash(*lint*)"):
             assert banned in DISALLOWED_TOOLS
+        assert "dev/" not in DISALLOWED_TOOLS
         assert argv[:4] == ["claude", "-p", "--output-format", "text"]
         assert "--model" not in argv
 
@@ -760,3 +762,14 @@ class TestTheDefaultRunners:
         assert spawn.env["GIT_CONFIG_KEY_0"] == "diff.external"
         assert spawn.env["GIT_CONFIG_VALUE_0"] == ""
         assert spawn.env["PATH"] == os.environ["PATH"]
+
+
+class TestMain:
+    def test_help_names_the_console_script(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit) as caught:
+            review_main(["--help"])
+
+        assert caught.value.code == 0
+        assert capsys.readouterr().out.startswith("Usage: review-diff")
