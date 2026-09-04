@@ -17,6 +17,7 @@ from click.testing import CliRunner, Result
 from batch.agent import PlanningAgent
 from batch.cli import (
     EMPTY_QUEUE_EXIT,
+    _run_root,  # pyright: ignore[reportPrivateUsage]
     _watch_passes,  # pyright: ignore[reportPrivateUsage]
     cli,
     main,
@@ -86,7 +87,7 @@ from batch.testing.payloads import (
 from batch.testing.scratch import Scratch, scratch
 from batch.text_output import debug_line
 from batch.verbs import Verbs
-from batch.vm import PS, GuestAccount, VmRunner
+from batch.vm import DEFAULT_RUN_ROOT, PS, GuestAccount, VmRunner
 
 
 @contextmanager
@@ -154,7 +155,7 @@ class TestStatusVerbose:
         )
 
     def _root(self, tmp_path: Path) -> Path:
-        runner = VmRunner(tmp_path, config=batch_config)
+        runner = VmRunner(tmp_path, worktree_root=lambda: tmp_path, config=batch_config)
         runner.socket(70).touch()
         runner.log(70).touch()
         runner.config_dir(70).mkdir()
@@ -189,7 +190,7 @@ class TestStatusVerbose:
     def test_verbose_surfaces_the_vm_facts_of_the_live_issue(
         self, tmp_path: Path, flag: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        runner = VmRunner(tmp_path, config=batch_config)
+        runner = VmRunner(tmp_path, worktree_root=lambda: tmp_path, config=batch_config)
 
         result = self._invoke(tmp_path, monkeypatch, flag)
 
@@ -736,7 +737,13 @@ class TestVerify:
 
 class TestVm:
     def _runner(self, tmp_path: Path) -> VmRunner:
-        return VmRunner(tmp_path, environ={}, config=batch_config, disks=frozenset)
+        return VmRunner(
+            tmp_path,
+            worktree_root=lambda: tmp_path,
+            environ={},
+            config=batch_config,
+            disks=frozenset,
+        )
 
     def test_console_previews_a_foreground_vibe_invocation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -846,6 +853,7 @@ class TestVm:
 
         runner = VmRunner(
             tmp_path,
+            worktree_root=lambda: tmp_path,
             environ={},
             config=batch_config,
             disks=frozenset,
@@ -899,7 +907,7 @@ class TestVm:
         assert "running" in result.output
         assert str(tmp_path / "issue-1499.log") in result.output
 
-    def test_status_of_an_exited_vm_outside_a_checkout_still_exits_one(
+    def test_status_outside_a_checkout_refuses_rather_than_guessing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         outside_a_checkout(monkeypatch)
@@ -909,7 +917,7 @@ class TestVm:
         )
 
         assert result.exit_code == 1
-        assert "exited" in result.output
+        assert "pass --repo" in result.output
 
     def test_console_still_reports_every_problem_in_a_malformed_batch_toml(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1569,9 +1577,9 @@ class TestPlan:
     ) -> None:
         stack = _planning_stack(monkeypatch, tmp_path)
         branch = _plan_pid(monkeypatch)
-        staged = VmRunner(tmp_path, environ={}, config=batch_config).named_config_dir(
-            branch
-        )
+        staged = VmRunner(
+            tmp_path, worktree_root=lambda: tmp_path, environ={}, config=batch_config
+        ).named_config_dir(branch)
         staged.mkdir(parents=True)
 
         result = self._invoke(tmp_path)
@@ -1598,9 +1606,9 @@ class TestPlan:
     ) -> None:
         stack = _planning_stack(monkeypatch, tmp_path)
         branch = _plan_pid(monkeypatch)
-        staged = VmRunner(tmp_path, environ={}, config=batch_config).named_config_dir(
-            branch
-        )
+        staged = VmRunner(
+            tmp_path, worktree_root=lambda: tmp_path, environ={}, config=batch_config
+        ).named_config_dir(branch)
 
         def failed(
             _command: Sequence[str], **_kwargs: object
@@ -1735,6 +1743,7 @@ class Built:
     roots: list[Path]
     stacks: list[FakeStack]
     configs: list[BatchConfig]
+    trees: list[Path]
 
 
 def _wire(
@@ -1745,6 +1754,7 @@ def _wire(
         FakeState(*issues),
         FakeRunner(tmp_path, polls={i.number: polls for i in issues}),
         FakeVerifier(),
+        [],
         [],
         [],
         [],
@@ -1761,8 +1771,14 @@ def _wire(
         built.stacks.append(stack)
         return stack
 
-    def runner_at(root: Path, *, config: Callable[[], BatchConfig]) -> FakeRunner:
+    def runner_at(
+        root: Path,
+        *,
+        worktree_root: Callable[[], Path],
+        config: Callable[[], BatchConfig],
+    ) -> FakeRunner:
         built.roots.append(root)
+        built.trees.append(worktree_root())
         built.configs.append(config())
         return built.runner
 
@@ -1856,6 +1872,31 @@ class TestRunConstruction:
         assert result.exit_code == 0, result.output
         assert built.roots == [tmp_path]
         assert (tmp_path / "run.lock").exists()
+
+    def test_the_runner_looks_for_disks_where_the_stack_creates_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = _wire(monkeypatch, tmp_path)
+
+        result = CliRunner().invoke(
+            cli, ["run", str(EPIC), "--run-root", str(tmp_path)]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert built.trees == [tmp_path.parent / "worktrees"]
+
+    def test_an_omitted_flag_locks_at_the_repo_s_own_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = _wire(monkeypatch, tmp_path)
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        scoped = tmp_path / "home" / ".cache" / "batch" / "acme" / "widgets"
+
+        result = CliRunner().invoke(cli, ["run", str(EPIC)])
+
+        assert result.exit_code == 0, result.output
+        assert built.roots == [scoped]
+        assert (scoped / "run.lock").exists()
 
 
 class TestSkipAndRelaunch:
@@ -2369,6 +2410,133 @@ class TestTheRepoOption:
         assert TEST_COMMANDS.cli not in err
 
 
+@click.command()
+@click.option("--run-root", type=click.Path(path_type=Path), default=DEFAULT_RUN_ROOT)
+@click.pass_context
+def _echo_root(ctx: click.Context, run_root: Path) -> None:
+    click.echo(str(_run_root(ctx, run_root)))
+
+
+def _resolved_root(monkeypatch: pytest.MonkeyPatch, root: Path, *args: str) -> str:
+    _ = config_at(monkeypatch, root / "checkout")
+    result = CliRunner().invoke(_echo_root, list(args))
+
+    assert result.exit_code == 0, result.output
+    return result.output.strip()
+
+
+class TestRunRootScoping:
+    def test_an_omitted_flag_scopes_the_default_by_the_config_slug(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+        assert _resolved_root(monkeypatch, tmp_path) == str(
+            tmp_path / "home" / ".cache" / "batch" / "acme" / "widgets"
+        )
+
+    def test_an_explicit_flag_is_taken_verbatim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        given = str(tmp_path / "elsewhere")
+
+        assert _resolved_root(monkeypatch, tmp_path, "--run-root", given) == given
+
+    def test_an_explicit_flag_naming_the_flat_default_is_not_re_scoped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        flat = str(DEFAULT_RUN_ROOT.expanduser())
+
+        assert _resolved_root(monkeypatch, tmp_path, "--run-root", flat) == flat
+
+
+_ROOT_ARGV: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("status",), ("77", "-v")),
+    (("vm",), ("status", "77")),
+    (("run",), ("77",)),
+    (("cleanup",), ("77",)),
+    (("gc",), ()),
+    (("attach",), ("77",)),
+    (("rework",), ("77", "88")),
+    (("debug",), ("77",)),
+    (("skip",), ("77",)),
+    (("relaunch",), ("77",)),
+    (("plan",), ("77",)),
+)
+
+
+def _argv_id(command: tuple[tuple[str, ...], tuple[str, ...]]) -> str:
+    return " ".join(command[0] + command[1])
+
+
+class _RootReachedError(Exception):
+    pass
+
+
+def _root_built(monkeypatch: pytest.MonkeyPatch, argv: Sequence[str]) -> Path:
+    """The root the command hands its runner, caught before the command can run."""
+    seen: list[Path] = []
+
+    def record(ctx: click.Context, run_root: Path) -> Path:
+        seen.append(_run_root(ctx, run_root))
+        raise _RootReachedError
+
+    monkeypatch.setattr("batch.cli._run_root", record)
+    result = CliRunner().invoke(cli, list(argv), obj=FakeState())
+
+    assert isinstance(result.exception, _RootReachedError), result.output
+    (root,) = seen
+    return root
+
+
+class TestEveryRunRootCommand:
+    @pytest.mark.parametrize("command", _ROOT_ARGV, ids=_argv_id)
+    def test_an_omitted_flag_lands_under_the_repo_s_own_root(
+        self,
+        command: tuple[Sequence[str], Sequence[str]],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _ = config_at(monkeypatch, tmp_path / "checkout")
+        head, tail = command
+
+        assert _root_built(monkeypatch, [*head, *tail]).parts[-2:] == (
+            "acme",
+            "widgets",
+        )
+
+    @pytest.mark.parametrize("command", _ROOT_ARGV, ids=_argv_id)
+    def test_an_explicit_flag_is_the_whole_root(
+        self,
+        command: tuple[Sequence[str], Sequence[str]],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _ = config_at(monkeypatch, tmp_path / "checkout")
+        head, tail = command
+        given = tmp_path / "elsewhere"
+
+        argv = [*head, "--run-root", str(given), *tail]
+
+        assert _root_built(monkeypatch, argv) == given
+
+    @pytest.mark.parametrize("command", _ROOT_ARGV, ids=_argv_id)
+    def test_an_unreadable_config_is_reported_rather_than_worked_around(
+        self,
+        command: tuple[Sequence[str], Sequence[str]],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _ = no_config_at(monkeypatch, tmp_path / "checkout")
+        head, tail = command
+
+        result = CliRunner().invoke(cli, [*head, *tail], obj=FakeState())
+
+        assert result.exit_code == 1
+        assert "batch.toml" in result.output
+
+
 class TestTheDefaultRunRoot:
     def test_run_without_a_run_root_fails_instead_of_locking_the_real_cache(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2498,7 +2666,12 @@ class TestAttach:
         result = CliRunner().invoke(
             cli,
             ["vm", "attach", "1499"],
-            obj=VmRunner(tmp_path, environ={}, config=batch_config),
+            obj=VmRunner(
+                tmp_path,
+                worktree_root=lambda: tmp_path,
+                environ={},
+                config=batch_config,
+            ),
         )
 
         assert result.exit_code != 0

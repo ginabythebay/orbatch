@@ -368,7 +368,11 @@ class TestAgreementWithTheConsole:
                 "--dry-run",
                 *flags,
             ],
-            obj=VmRunner(Path("run"), config=batch_config),
+            obj=VmRunner(
+                Path("run"),
+                worktree_root=lambda: Path("worktrees"),
+                config=batch_config,
+            ),
         )
 
         assert result.exit_code == 0, result.output

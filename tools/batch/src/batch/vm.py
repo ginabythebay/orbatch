@@ -60,6 +60,13 @@ SANDBOX_FLAGS = (
 )
 
 
+def scoped_run_root(base: Path, slug: str) -> Path:
+    """One run root per repository: sockets, logs, claims and staged configs are
+    keyed by issue number alone, so two repos sharing a root share all four."""
+    owner, _, name = slug.partition("/")
+    return base / owner / name
+
+
 def agent_command(
     config: BatchConfig,
     *,
@@ -302,18 +309,19 @@ def send_chain(
     )
 
 
-def _running_disks() -> frozenset[str]:
+def _running_disks() -> frozenset[Path]:
     return disks_in_use(probe_output(PS))
 
 
-def disks_in_use(text: str) -> frozenset[str]:
-    """The `.raw` basenames named as a whole argv token in `ps -Ao args=` output.
+def disks_in_use(text: str) -> frozenset[Path]:
+    """The `.raw` paths named as a whole argv token in `ps -Ao args=` output.
 
     Whole tokens only: substring matching would let a live `plan-133` hold its
-    unrelated neighbour `plan-13` hostage.
+    unrelated neighbour `plan-13` hostage. Whole paths, because two repositories
+    name their slots alike.
     """
     return frozenset(
-        Path(token).name
+        Path(token).resolve()
         for line in text.splitlines()
         for token in line.split()
         if token.endswith(".raw")
@@ -325,16 +333,18 @@ class VmRunner:
         self,
         root: Path = DEFAULT_RUN_ROOT,
         *,
+        worktree_root: Callable[[], Path],
         config: Callable[[], BatchConfig],
         environ: Mapping[str, str] | None = None,
-        disks: Callable[[], frozenset[str]] | None = None,
+        disks: Callable[[], frozenset[Path]] | None = None,
         token: Callable[[str], str] = keychain_token,
         account: GuestAccount | None = None,
     ) -> None:
         self._root: Path = root.expanduser()
+        self._worktree_root: Callable[[], Path] = worktree_root
         self._config: Callable[[], BatchConfig] = config
         self._environ: Mapping[str, str] = os.environ if environ is None else environ
-        self._disks: Callable[[], frozenset[str]] = disks or _running_disks
+        self._disks: Callable[[], frozenset[Path]] = disks or _running_disks
         self._token: Callable[[str], str] = token
         self._account: GuestAccount = account or GuestAccount(login=fetch_login)
 
@@ -444,7 +454,8 @@ class VmRunner:
         socket = self._root / f"{branch}.sock"
         if socket.exists():
             return VmStatus.RUNNING
-        return VmStatus.RUNNING if f"{branch}.raw" in self._disks() else VmStatus.EXITED
+        disk = (self._worktree_root() / f"{branch}.raw").resolve()
+        return VmStatus.RUNNING if disk in self._disks() else VmStatus.EXITED
 
     def claim_path(self, branch: str) -> Path:
         return self._root / f"{branch}.claim"

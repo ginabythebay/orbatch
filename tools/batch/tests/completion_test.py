@@ -147,7 +147,7 @@ def test_a_cwd_outside_any_checkout_leaves_the_generic_name(
         main(["vm", "--run-root", str(tmp_path), "status", "1499"])
 
     assert caught.value.code == 1
-    assert "#1499 exited" in capsys.readouterr().out
+    assert "pass --repo" in capsys.readouterr().err
 
 
 def test_a_subcommand_dispatches_through_main(
