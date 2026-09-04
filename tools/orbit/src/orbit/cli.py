@@ -42,7 +42,6 @@ from orbit.text_output import (
 )
 from orbit.tree import FilteredRun, build_tree
 from orbit.tui.app import OrbitApp, run_tui
-from shellcomp.completion import source_with_alias
 
 PROG_NAME = "orbit"
 COMPLETE_VAR = "_ORBIT_COMPLETE"
