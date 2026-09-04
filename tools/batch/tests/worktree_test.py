@@ -1,22 +1,32 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import override
 
 import pytest
+from click.testing import CliRunner, Result
 
+from batch.cli import cli as batch_cli
 from batch.models import Slot
 from batch.stack import StackManager
-from batch.testing.payloads import TEST_COMMANDS, batch_config
+from batch.testing.payloads import (
+    TEST_COMMANDS,
+    TEST_COMMANDS_TOML,
+    TEST_REPO_TOML,
+    batch_config,
+)
 from batch.testing.scratch import SEED_CONTENT, TRACKED_FILE, Scratch, git, scratch
+from batch.vm import VmRunner
 from batch.worktree import (
     CONFIRM,
+    DEFAULT_MODEL,
     CliConsole,
     Console,
     WorktreeSession,
     agent_flags,
+    cli,
 )
 
 
@@ -208,7 +218,7 @@ class TestConsoleCommand:
             mount_root=stack.mount_root,
             flags=agent_flags(
                 issue=42,
-                guidance="write it twice",
+                guidance=None,
                 model="opus",
                 base="release",
                 max_tests=3,
@@ -233,8 +243,6 @@ class TestConsoleCommand:
             "/tmp/staged",
             "--issue",
             "42",
-            "--guidance",
-            "write it twice",
             "--model",
             "opus",
             "--base",
@@ -254,3 +262,113 @@ class TestConsoleCommand:
             max_tests=None,
             plan_guidance=None,
         ) == ("--model", "opus")
+
+
+def _configured(sc: Scratch) -> None:
+    _ = (sc.repo / "batch.toml").write_text(
+        f'[vm]\nseed_image = "{sc.seed}"\n' + TEST_REPO_TOML + TEST_COMMANDS_TOML
+    )
+
+
+class TestCommandLine:
+    def _invoke(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch, args: Sequence[str]
+    ) -> tuple[Result, list[tuple[str, ...]]]:
+        _configured(sc)
+        monkeypatch.chdir(sc.repo)
+        spawned: list[tuple[str, ...]] = []
+
+        def record(self: CliConsole, slot: Slot, config_dir: Path) -> int:
+            spawned.append(self.command(slot, config_dir))
+            return 0
+
+        monkeypatch.setattr(CliConsole, "boot", record)
+        return CliRunner().invoke(cli, list(args), input="\n"), spawned
+
+    def test_the_model_is_pinned_and_the_short_flags_are_honoured(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, spawned = self._invoke(
+            sc, monkeypatch, ["fix-thing", "42", "-n", "3", "-g", "stay small"]
+        )
+
+        assert result.exit_code == 0, result.output
+        [command] = spawned
+        assert command[-8:] == (
+            "--issue",
+            "42",
+            "--model",
+            DEFAULT_MODEL,
+            "--max-tests",
+            "3",
+            "--plan-guidance",
+            "stay small",
+        )
+
+    def test_the_positional_guidance_reaches_the_argv(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, spawned = self._invoke(
+            sc, monkeypatch, ["fix-thing", "42", "write it twice"]
+        )
+
+        assert result.exit_code == 0, result.output
+        [command] = spawned
+        assert command[-6:] == (
+            "--issue",
+            "42",
+            "--guidance",
+            "write it twice",
+            "--model",
+            DEFAULT_MODEL,
+        )
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["fix-thing", "--base", "release"],
+            ["fix-thing", "-n", "3"],
+            ["fix-thing", "42", "write it twice", "-g", "stay small"],
+        ],
+    )
+    def test_a_combination_the_console_refuses_creates_nothing(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch, args: list[str]
+    ) -> None:
+        result, spawned = self._invoke(sc, monkeypatch, args)
+
+        assert result.exit_code == 2
+        assert spawned == []
+        assert not (sc.trees / "fix-thing").exists()
+
+
+class TestAgreementWithTheConsole:
+    """`vwt` hands its flags to `batch vm console`, which validates them itself."""
+
+    def test_the_flags_vwt_builds_are_flags_vm_console_accepts(self) -> None:
+        flags = agent_flags(
+            issue=42,
+            guidance=None,
+            model="opus",
+            base="release",
+            max_tests=3,
+            plan_guidance="stay small",
+        )
+
+        result = CliRunner().invoke(
+            batch_cli,
+            [
+                "vm",
+                "console",
+                "--worktree",
+                "widgets/worktrees/fix-thing",
+                "--disk",
+                "fix-thing.raw",
+                "--config-dir",
+                "staged",
+                "--dry-run",
+                *flags,
+            ],
+            obj=VmRunner(Path("run"), config=batch_config),
+        )
+
+        assert result.exit_code == 0, result.output

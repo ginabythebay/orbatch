@@ -63,9 +63,11 @@ class CliConsole(Console):
 
     @override
     def boot(self, slot: Slot, config_dir: Path) -> int:
-        return subprocess.run(
-            self.command(slot, config_dir), check=False, cwd=self.mount_root
-        ).returncode
+        command = self.command(slot, config_dir)
+        try:
+            return subprocess.run(command, check=False, cwd=self.mount_root).returncode
+        except FileNotFoundError as exc:
+            raise click.ClickException(f"{command[0]} is not installed.") from exc
 
 
 def agent_flags(
@@ -152,6 +154,30 @@ def _at_risk(stack: StackManager, branch: str) -> tuple[str, ...]:
     )
 
 
+def _refuse_impossible_options(
+    issue: int | None,
+    guidance: str | None,
+    base: str | None,
+    max_tests: int | None,
+    plan_guidance: str | None,
+) -> None:
+    """The same combinations `vm console` refuses, refused before a slot exists.
+
+    Left to the callee they surface as a usage error from another program,
+    after the branch, worktree and disk have been made.
+    """
+    if issue is None and (guidance is not None or base is not None):
+        raise click.UsageError("GUIDANCE and --base need an ISSUE to work on.")
+    if max_tests is None and plan_guidance is None:
+        return
+    if issue is None:
+        raise click.UsageError("--max-tests and --plan-guidance need an ISSUE.")
+    if guidance is not None:
+        raise click.UsageError(
+            "--max-tests and --plan-guidance steer a plan phase GUIDANCE skips."
+        )
+
+
 def _repo() -> Path:
     try:
         return main_repo()
@@ -193,6 +219,7 @@ def cli(
 
     With no ISSUE the guest gets a bare claude session.
     """
+    _refuse_impossible_options(issue, guidance, base, max_tests, plan_guidance)
     repo = _repo()
     try:
         config = load_config(repo)
