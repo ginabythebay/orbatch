@@ -6,7 +6,7 @@ Issue and batch tooling.
 
 | Path | Console script | What it does |
 | --- | --- | --- |
-| `tools/batch` | `batch` | Drives agent VMs over a stack of issues |
+| `tools/batch` | `batch`, `vwt` | Drives agent VMs over a stack of issues, or over one branch |
 | `tools/orbit` | `orbit` | GitHub issue and epic management, CLI and TUI |
 | `tools/review` | `review-diff`, `review-html` | Fresh-eyes code review over a diff or PR |
 | `tools/snippets` | `snippets` | Per-epic activity and accomplishment rollups |
