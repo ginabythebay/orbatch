@@ -408,3 +408,33 @@ Notes for next iteration: no migration for existing flat `~/.cache/batch`
 contents — a run in flight across the upgrade is orphaned, not corrupted.
 Whether one host can actually boot two repos' VMs at once is unverified; the
 issue names an explicit slot budget as the separate follow-up if not.
+
+## 2026-09-04 — issue #22 Reclaimer's unreachable unpushed pre-check
+
+https://github.com/ginabythebay/orbatch/issues/22
+
+Decisions:
+- Took the issue's option 1 (delete), not option 2 (keep + pin with a stub
+  stack): the check is dead against any `Reclaimer` whose `base` is a local
+  branch, and `base` is `MAIN` at the sole production call site
+  (`cli.py:978`) and in every test. A test pinning a branch that cannot be
+  reached would pin the fake, not the code. The task also forbade new tests.
+- `_unsafe` had one surviving check, so it folded into `_refuse` rather than
+  staying a one-line indirection. `unpushed` dropped from reclaim's `Slots`
+  protocol (structural; teardown has its own `Slots`, and `worktree.py:151`
+  types against concrete `StackManager`), and from the two test fakes.
+- The guard now lives ONLY in `StackManager._refuse_if_unsafe`, reached
+  because `_reclaim` calls `remove_branch(branch)` unforced. If `Reclaimer.base`
+  ever becomes a remote-tracking ref, the pre-check has to come back —
+  commits no local head holds would then pass `merged_into`.
+
+Files: tools/batch/src/batch/reclaim.py, tools/batch/tests/reclaim_test.py.
+
+Review: two findings, both fixed. (1) nothing pinned the deferral to
+`_refuse_if_unsafe` — `RacingStack.remove_branch` did `del force`, so flipping
+`_reclaim` to `force=True` left the suite green. It now mirrors the real
+manager (refuses unforced, succeeds forced); verified red under that mutation.
+(2) this entry was missing. Correctness lens: no findings.
+
+Notes for next iteration: `Reclaimer` reaches removal only for branches that
+are ancestors of local `main`; every safety claim in reclaim rests on that.

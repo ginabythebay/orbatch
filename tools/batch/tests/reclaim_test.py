@@ -174,7 +174,8 @@ class TestReclaim:
 
 
 class RacingStack:
-    """Selects clean, then refuses removal: the slot changed under the sweep."""
+    """Selects clean, then refuses an unforced removal: the slot changed under
+    the sweep. Forcing succeeds, as the real manager does."""
 
     def __init__(self, skip: TeardownSkip, root: Path) -> None:
         self._skip: TeardownSkip = skip
@@ -199,8 +200,14 @@ class RacingStack:
         return branch
 
     def remove_branch(self, branch: str, *, force: bool = False) -> RemoveResult:
-        del force
-        raise UnsafeRemovalError(branch, self._skip, "raced")
+        if not force:
+            raise UnsafeRemovalError(branch, self._skip, "raced")
+        return RemoveResult(
+            branch=branch,
+            removed_worktree=True,
+            removed_branch=True,
+            removed_disk=True,
+        )
 
 
 class TestRacedRemoval:
