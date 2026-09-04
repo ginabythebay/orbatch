@@ -111,6 +111,10 @@ dependencies.
 
 ### Package structure
 
+Every workspace member keeps its code under `src/`. The portability guard
+sweeps `*/src/*` modules and asserts it reaches every declared member, so a
+flat-layout member turns the suite red.
+
 Prefer empty `__init__.py` files. Consumers should import from specific
 submodules (e.g. `from ghgql.repo import repo_root`), not from the
 package. This avoids circular imports from eager loading and makes

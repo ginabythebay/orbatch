@@ -329,3 +329,42 @@ Notes for next iteration: the extraction repo still ships `dev/vwt` and
 `dev/vibe_ralph` — deleting them, adding `~/bin/vwt`, and updating its four
 docs is the follow-up `#18` names. Nothing here is verified against a real
 VM boot.
+
+## 2026-09-04 — issue #19 drop _COMMAND_PATH_EXEMPT
+
+https://github.com/ginabythebay/orbatch/issues/19
+
+Decisions:
+- `_COMMAND_PATH_EXEMPT` and the `startswith` filter gone; `_is_guarded_module`
+  is now `.py` + `/src/`, so orbit/review/snippets are swept for `dev/`.
+- Coverage assertion NOT the issue's five-named-paths shape, and not the
+  design note's "roots among tracked .py files" either — that compares a set
+  with itself (both sides filter on `/src/`), which round 1 of review caught.
+  Expected roots come from the uv workspace member globs in the root
+  `pyproject.toml` (dirs matching `packages/*`/`tools/*` that hold a
+  `pyproject.toml`). Subset, not equality: `_workspace_members() -
+  _src_roots(_MODULES) == set()`, so extra coverage outside a member is fine
+  and a failure names the escaping package. Verified red by scaffolding a
+  flat-layout `packages/newthing`.
+- Offender logic extracted to `_command_path_lines(root, source)` mirroring
+  `_host_repo_lines`; new planted-`dev/` test so the check cannot pass
+  vacuously.
+- Test 4 (test files stay unswept) is hermetic under `tmp_path` —
+  `_is_guarded_module` now takes `root`. Not pinned to
+  `tools/review/tests/cli_test.py`'s fixture text, which round 2 flagged.
+- `assert "dev/" not in DISALLOWED_TOOLS` dropped from review's cli_test; the
+  sweep covers it. `Bash(*lint*)` assertion kept.
+- CLAUDE.md now states the `src/` layout requirement, so a flat-layout member
+  failing the guard is legible rather than mysterious.
+
+Files: packages/portability/tests/portability_test.py,
+tools/review/tests/cli_test.py, CLAUDE.md, progress.md.
+
+Review: two rounds, six findings, five fixed, one declined (restrict the
+member set to dirs that already have `src/` — declined: a flat-layout member
+escaping the sweep is exactly what this test exists to catch; documented the
+convention instead).
+
+Notes for next iteration: no exemption list remains anywhere in the guard. A
+new workspace member must ship `src/` layout or the portability suite goes
+red before its first module is even swept.

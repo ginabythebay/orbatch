@@ -58,11 +58,11 @@ def _text(path: Path) -> str | None:
 _FILES: Final = [path for path in _listed() if _text(path) is not None]
 
 
-def _is_guarded_module(path: Path) -> bool:
-    return path.suffix == ".py" and "/src/" in path.relative_to(_ROOT).as_posix()
+def _is_guarded_module(root: Path, path: Path) -> bool:
+    return path.suffix == ".py" and "/src/" in path.relative_to(root).as_posix()
 
 
-_MODULES: Final = [path for path in _FILES if _is_guarded_module(path)]
+_MODULES: Final = [path for path in _FILES if _is_guarded_module(_ROOT, path)]
 
 
 def _workspace_members() -> set[str]:
@@ -133,12 +133,15 @@ def test_a_planted_command_path_is_reported_with_its_line(tmp_path: Path) -> Non
     ]
 
 
-def test_a_test_carrying_a_command_path_is_not_swept() -> None:
-    carrier = _ROOT / "tools/review/tests/cli_test.py"
+def test_a_test_carrying_a_command_path_is_not_swept(tmp_path: Path) -> None:
+    module = tmp_path / "pkg/src/pkg/cli.py"
+    carrier = tmp_path / "pkg/tests/cli_test.py"
+    for planted in (module, carrier):
+        planted.parent.mkdir(parents=True)
+        _ = planted.write_text(f'PROG = "{_COMMAND_PATH}thing"\n')
 
-    assert _command_path_lines(_ROOT, carrier) != []
-    assert carrier in _FILES
-    assert carrier not in _MODULES
+    assert _is_guarded_module(tmp_path, module)
+    assert not _is_guarded_module(tmp_path, carrier)
 
 
 def test_the_declaring_module_is_scanned_like_any_other_file() -> None:
@@ -146,4 +149,4 @@ def test_the_declaring_module_is_scanned_like_any_other_file() -> None:
 
 
 def test_every_workspace_member_is_swept_for_command_paths() -> None:
-    assert _src_roots(_MODULES) == _workspace_members()
+    assert _workspace_members() - _src_roots(_MODULES) == set()
