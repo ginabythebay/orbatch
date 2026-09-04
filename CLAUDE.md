@@ -60,7 +60,8 @@ uv run pytest -n auto
 
 # Every static check: ruff check, ruff format --check, basedpyright.
 # Stops at the first failure. Never `uv run basedpyright` — it resolves
-# imports against whatever interpreter is on PATH.
+# imports against the `.venv` named in `pyproject.toml`, which is not
+# always the live environment.
 dev/lint
 
 # Run a single test file
@@ -69,6 +70,9 @@ uv run pytest tools/orbit/tests/config_test.py
 # Run a specific test by name
 uv run pytest -k "test_reorder"
 ```
+
+See `.claude/pyright-guidance.md` before suppressing anything
+basedpyright reports.
 
 Avoid running bash commands that start with `python -c`. It is not
 possible to safely grant blanket permission for this, so the user ends

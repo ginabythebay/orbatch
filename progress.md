@@ -468,3 +468,54 @@ findings.
 Notes for next iteration: `#32` is the open follow-up. Only the
 unused-declaration direction is checkable — `uv sync` installs the whole
 workspace, so a *missing* declaration never fails locally.
+
+## 2026-09-04 — issue #30 wire the basedpyright guardrails
+
+https://github.com/ginabythebay/orbatch/issues/30
+
+Decisions:
+- Three new/edited files, no code: `.claude/hooks/no-bare-basedpyright.sh`
+  (PreToolUse, jq + `grep -E`, exit 2 on a match), `.claude/settings.json`
+  wiring only that hook under `matcher: "Bash"` with
+  `"if": "Bash(*basedpyright*)"`, and `.claude/pyright-guidance.md` now
+  tracked and rewritten for this repo.
+- Guidance rewrite: dropped the `.basedpyright/` baseline paragraph, the
+  "only new or modified code" claim (replaced with "dev/lint is at 0/0/0 and
+  must stay there"), the FastAPI bullet, the justfile, and — after review —
+  PyCharm from the list of things that go through the wrapper. PyCharm reads
+  `pyproject.toml` and cannot be handed an interpreter, which the same file
+  says correctly two paragraphs down. Kept the strategy ladder, the
+  `# pyright: ignore` ban with its `reportPrivateUsage=false`-in-tests
+  exception, and the do-not-symlink-`.venv` warning. `patch.object` and
+  "never `_ = some_param`" are linked to `CLAUDE.md`, not duplicated.
+- `CLAUDE.md` gets a two-line pointer after the commands block. Also fixed
+  the false half of the adjacent comment: bare basedpyright resolves against
+  the `.venv` named in `pyproject.toml`, not "whatever interpreter is on
+  PATH". Contradicting the file being linked, one line away, was worse than
+  the scope creep.
+- Regex matches the bare word, NOT a prefix: `(^|[[:space:]/])basedpyright`.
+  Modelling the prefix (`uv run …`) was the first cut and review killed it —
+  `env -u VIRTUAL_ENV uv run basedpyright`, the form `dev/lint` itself uses,
+  walked straight past it, as did `uvx` and `.venv/bin/`. Cost of the wider
+  match: a bare mention (`uv run pytest -k basedpyright`) is denied too.
+  Deliberate — a rephrase costs one call, a bypass costs the guardrail.
+  The hook's own path is not self-denying (`-` before, `.` after).
+- `no-background.sh` left unwired, per the issue.
+
+Files: .claude/hooks/no-bare-basedpyright.sh (new, 100755),
+.claude/settings.json (new), .claude/pyright-guidance.md (new — it was
+untracked before), CLAUDE.md, progress.md.
+
+Review: three findings, two fixed (the regex, the PyCharm claim), one
+declined and filed as `#34` — no automated test for the matcher, which the
+no-new-tests constraint on this iteration forbade. `#34` carries the
+reviewer's parametrized-table shape, the deny/allow rows, and the `-k` case
+pinned as a deliberate deny.
+
+Notes for next iteration: `#32` and `#34` are the open follow-ups. Anything
+you run through Bash that merely NAMES basedpyright is denied now, including
+`grep basedpyright dev/lint` — build the word from two pieces
+(`B="based""pyright"`) when you need to inspect or test the hook. The
+portability guard sweeps untracked files too, so never let the extraction
+repo's name back into `.claude/` — that is why the guidance file names no
+source for what it was adapted from.
