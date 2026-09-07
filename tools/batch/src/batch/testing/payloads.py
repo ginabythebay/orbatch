@@ -101,6 +101,7 @@ def _repo_is(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
         return root
 
     monkeypatch.setattr("batch.cli.main_repo", resolved)
+    monkeypatch.setattr("batch.context.main_repo", resolved)
 
 
 def config_at(
@@ -138,6 +139,7 @@ def outside_a_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
         raise CalledProcessError(128, ("git", "rev-parse", "--show-toplevel"))
 
     monkeypatch.setattr("batch.cli.main_repo", absent)
+    monkeypatch.setattr("batch.context.main_repo", absent)
     no_git_remote(monkeypatch)
 
 

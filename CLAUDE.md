@@ -84,7 +84,7 @@ Often `jq` will do instead.
 A uv workspace of seven packages:
 
 - `tools/batch` — drives agent VMs over a stack of issues (`batch`),
-  or over a single branch (`vwt`)
+  or over a single branch (`batch vwt`)
 - `tools/orbit` — GitHub issue and epic management, CLI and TUI
   (`orbit`)
 - `tools/review` — fresh-eyes code review over a diff or PR

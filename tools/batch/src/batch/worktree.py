@@ -1,14 +1,14 @@
-"""The solo entry point: one branch, one worktree, one VM, then teardown.
+"""The solo verb: one branch, one worktree, one VM, then teardown.
 
-`batch` drives a stack of issues; `vwt` drives a single branch through the
-same `StackManager` slot and the same `vm console`, and asks before it takes
-anything away.
+`batch` drives a stack of issues; `batch vwt` drives a single branch through
+the same `StackManager` slot and the same `vm console`, and asks before it
+takes anything away.
 """
 
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,9 +16,10 @@ from typing import Protocol, override
 
 import click
 
-from batch.config import BatchConfig, ConfigError, load_config
+from batch.config import BatchConfig
+from batch.context import config_for, main_repo_for
 from batch.models import Slot
-from batch.stack import StackManager, main_repo
+from batch.stack import StackManager
 from batch.vm import relative_worktree
 
 PROG_NAME = "vwt"
@@ -178,16 +179,7 @@ def _refuse_impossible_options(
         )
 
 
-def _repo() -> Path:
-    try:
-        return main_repo()
-    except subprocess.CalledProcessError as exc:
-        raise click.ClickException(
-            f"Not inside a git checkout; run {PROG_NAME} from the repository."
-        ) from exc
-
-
-@click.command()
+@click.command("vwt")
 @click.argument("branch")
 @click.argument("issue", type=int, required=False)
 @click.argument("guidance", required=False)
@@ -220,12 +212,8 @@ def cli(
     With no ISSUE the guest gets a bare claude session.
     """
     _refuse_impossible_options(issue, guidance, base, max_tests, plan_guidance)
-    repo = _repo()
-    try:
-        config = load_config(repo)
-    except ConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    stack = StackManager(repo, seed_image=config.seed_image)
+    config = config_for(ctx)
+    stack = StackManager(main_repo_for(ctx), seed_image=config.seed_image)
     console = CliConsole(
         config=config,
         mount_root=stack.mount_root,
@@ -240,11 +228,3 @@ def cli(
     )
     session = WorktreeSession(stack, console, ask=input, echo=click.echo)
     ctx.exit(session.run(branch))
-
-
-def main(args: Sequence[str] | None = None) -> None:
-    cli(args=args, prog_name=PROG_NAME)
-
-
-if __name__ == "__main__":
-    main()

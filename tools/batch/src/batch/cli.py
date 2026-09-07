@@ -18,6 +18,9 @@ from click.decorators import FC
 from batch.agent import PlanningAgent
 from batch.awake import awake
 from batch.config import BatchConfig, ConfigError, load_config
+from batch.context import REPO_KEY as _REPO_KEY
+from batch.context import config_for as _resolve_config
+from batch.context import main_repo_for as _main_repo
 from batch.github.client import BatchGitHub
 from batch.lock import run_lock
 from batch.models import (
@@ -82,6 +85,7 @@ from batch.vm import (
 )
 from batch.watch import DEFAULT_WATCH_INTERVAL
 from batch.watch import watch as watch_passes
+from batch.worktree import cli as vwt
 from ghgql.repo import repo
 from ghgql.transport import GitHubGraphQL, GitHubTransport
 from shellcomp.completion import source_with_alias
@@ -130,43 +134,6 @@ def _drift(slot: Slot, base: str) -> str:
 
 def _targets_arg(f: FC) -> FC:
     return click.argument("targets", type=int, nargs=-1, required=True)(f)
-
-
-_CONFIG_KEY = "batch.config"
-_REPO_KEY = "batch.repo"
-_MAIN_REPO_KEY = "batch.main_repo"
-
-
-def _main_repo(ctx: click.Context) -> Path:
-    """Cached: `main_repo` shells out, and a poll loop asks once per status."""
-    cached = ctx.meta.get(_MAIN_REPO_KEY)
-    if isinstance(cached, Path):
-        return cached
-    try:
-        found = main_repo(cast("Path | None", ctx.meta.get(_REPO_KEY)))
-    except subprocess.CalledProcessError as exc:
-        raise click.ClickException(
-            "Not inside a git checkout; run batch from the repository or pass --repo."
-        ) from exc
-    ctx.meta[_MAIN_REPO_KEY] = found
-    return found
-
-
-def _resolve_config(ctx: click.Context) -> BatchConfig:
-    """The repo's `batch.toml`, read once per invocation and cached.
-
-    Cached on `ctx.meta` rather than `ctx.obj`, which the isinstance
-    dispatch in the other resolvers already claims for injected fakes.
-    """
-    cached = ctx.meta.get(_CONFIG_KEY)
-    if isinstance(cached, BatchConfig):
-        return cached
-    try:
-        config = load_config(_main_repo(ctx))
-    except ConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    ctx.meta[_CONFIG_KEY] = config
-    return config
 
 
 def _prog(ctx: click.Context) -> str:
@@ -1295,3 +1262,8 @@ def plan(
     finally:
         _ = runner.clean_config(config_dir)
         _reclaim_plan_slot(manager, branch, config.commands.cli)
+
+
+# Mounted here rather than declared in `worktree`, which stays free of the
+# group so it can share the context resolvers without importing back into it.
+cli.add_command(vwt)

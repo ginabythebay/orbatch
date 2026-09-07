@@ -20,7 +20,7 @@ _PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
 
 # `python -m <package>` runs whichever entry point that package's __main__
 # picks, so a package declaring a second script names its own module here.
-_MODULE_FORM: Final = {"review-html": "review.html", "vwt": "batch.worktree"}
+_MODULE_FORM: Final = {"review-html": "review.html"}
 
 
 def _load(path: Path) -> dict[str, object]:
@@ -67,7 +67,6 @@ def test_the_workspace_declares_console_scripts() -> None:
         "review-diff",
         "review-html",
         "snippets",
-        "vwt",
     }
 
 

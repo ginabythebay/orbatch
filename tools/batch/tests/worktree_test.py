@@ -26,7 +26,6 @@ from batch.worktree import (
     Console,
     WorktreeSession,
     agent_flags,
-    cli,
 )
 
 
@@ -272,10 +271,16 @@ def _configured(sc: Scratch) -> None:
 
 class TestCommandLine:
     def _invoke(
-        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch, args: Sequence[str]
+        self,
+        sc: Scratch,
+        monkeypatch: pytest.MonkeyPatch,
+        args: Sequence[str],
+        *,
+        group_args: Sequence[str] = (),
+        cwd: Path | None = None,
     ) -> tuple[Result, list[tuple[str, ...]]]:
         _configured(sc)
-        monkeypatch.chdir(sc.repo)
+        monkeypatch.chdir(sc.repo if cwd is None else cwd)
         spawned: list[tuple[str, ...]] = []
 
         def record(self: CliConsole, slot: Slot, config_dir: Path) -> int:
@@ -283,7 +288,27 @@ class TestCommandLine:
             return 0
 
         monkeypatch.setattr(CliConsole, "boot", record)
-        return CliRunner().invoke(cli, list(args), input="\n"), spawned
+        invocation = [*group_args, "vwt", *args]
+        return CliRunner().invoke(batch_cli, invocation, input="\n"), spawned
+
+    def test_the_group_repo_option_reaches_the_slot(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+
+        result, spawned = self._invoke(
+            sc,
+            monkeypatch,
+            ["fix-thing"],
+            group_args=["--repo", str(sc.repo)],
+            cwd=outside,
+        )
+
+        assert result.exit_code == 0, result.output
+        [command] = spawned
+        relative = str((sc.trees / "fix-thing").relative_to(sc.repo.parent.parent))
+        assert command[:3] == (TEST_COMMANDS.cli, "--repo", relative)
 
     def test_the_model_is_pinned_and_the_short_flags_are_honoured(
         self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
