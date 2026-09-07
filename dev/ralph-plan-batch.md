@@ -14,11 +14,14 @@ You are planning every queued issue under {{TARGETS}}, in one session.
    `next-issue` gave you, and its PREDECESSORS placeholder is the
    predecessors it listed; drop that line when it listed none. Ignore its
    remaining `{{...}}` markers — this flow has no plan-phase steering.
-3. Once the approved plan is written to the issue body, run the
+   Override its steps 4 and 5: do not present the test plan for approval
+   and do not wait. Write it straight to the issue body and move on. Its
+   step 3 still holds — genuine design questions are still worth asking.
+3. Once the plan is written to the issue body, run the
    `batch agent plan-written <issue> {{TARGETS_ARGS}}` command `next-issue`
    printed. It re-reads the issue and refuses if the plan is not there;
    a refusal means the write did not land, so fix it and run it again.
 4. Go back to step 1.
 
 Do not write any code and do not implement anything. Your only deliverable
-is an approved test plan on each issue's body.
+is a test plan on each issue's body.
