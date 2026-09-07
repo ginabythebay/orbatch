@@ -568,3 +568,56 @@ Notes for next iteration: `#32` and `#34` remain the open follow-ups.
 `print_parent_issue` (`orbit parent`) is the one listing with no glyph
 column — single row, nothing to align against. A batch label past the
 100th on an issue still renders blank.
+
+## 2026-09-07 — issue #40 dired-style marks in the orbit TUI
+
+https://github.com/ginabythebay/orbatch/issues/40
+
+Decisions:
+- `orbit/marks.py` holds `Marks` (`toggle`/`unmark`/`clear`/`count`/
+  `__contains__` over a `set[int]`). One instance on the app, injected
+  into `IssueTree` and both `IssueList`s, so marks outlive `r` and
+  `e`/`c`/`b`. `U` clears globally.
+- `issue_text(..., marked=)` prepends a `MARK = "*"` column (Palette.KEY)
+  ahead of the batch glyph; `filtered_text` reserves both columns blank.
+  Every existing prefix assertion moved one column right (`_label` in
+  tui_test strips three chars now; help legend `index("#") == 3`).
+- `space` is bound on BOTH `OrbitApp.BINDINGS` and `IssueTree.BINDINGS`
+  as `app.mark_toggle`. Textual's `Tree` binds space to `toggle_node`
+  and the focused widget wins; the `app.` prefix is what routes it up —
+  a bare name shadows and fires nothing. The app binding must stay
+  because `reserved_keys()` reads only the app's list. Verified red by
+  removing the widget binding.
+- Targeted re-render: `IssueNodeData` now carries `labels`/`open_count`/
+  `total_count` and a `label(marked)` method, so `TreeNode.set_label`
+  rebuilds a row without a fetch. `IssueList` keeps `{number: Issue}`
+  and uses `replace_option_prompt_at_index`, walking the visible options
+  (closed issues hidden by `f` have no option — walking `_issues`
+  crashed on `U`, review round 1).
+- Mark changes re-render EVERY view widget, not just the visible one:
+  `g` can show the tree again via `_land_on`/`reveal` without a reload,
+  which left a stale `*` (review round 1).
+- `IssueList.advance()` is a no-wrap cursor-down; `OptionList.
+  action_cursor_down` wraps, which would run marks in a circle. Tree's
+  `action_cursor_down` already clamps.
+- Status bar gained a `#mark-count` Static ("N marked", blank at 0);
+  the load message keeps overwriting `#status-message`, so a separate
+  cell is what survives a refresh.
+- Placeholder rows: `selected_issue_number` is already None there, so
+  `space` marks nothing and still advances.
+- `mark_toggle`/`unmark`/`unmark_all` are in `_MAIN_SCREEN_ACTIONS`.
+
+Files: tools/orbit/src/orbit/marks.py (new),
+tools/orbit/src/orbit/tui/{app,widgets,screens}.py,
+tools/orbit/tests/{marks_test.py (new),widgets_test.py,tui_test.py},
+tools/orbit/docs/tui-design.md.
+
+Review: round 1, seven findings, all fixed — two real bugs (the `U`
+crash with hidden closed rows in a list; stale glyphs after `g`),
+three coverage gaps (u/U in a list, modal blocking, advance over a
+placeholder), four signature-restating docstrings, this entry.
+
+Notes for next iteration: `#32` and `#34` remain open. The batch-verb
+follow-up reads `OrbitApp._marks`; epics are marked by their own
+number only (batch expands them). A widget other than the tree that
+ever binds `u`/`U` itself needs the same `app.` shadow trick.

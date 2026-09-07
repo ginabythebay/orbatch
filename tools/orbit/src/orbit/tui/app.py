@@ -461,21 +461,26 @@ class OrbitApp(App[None]):
         number = widget.selected_issue_number
         if number is not None:
             self._marks.toggle(number)
-            widget.refresh_mark(number)
-            self._show_mark_count()
+            self._mark_changed(number)
         widget.advance()
 
     def action_unmark(self) -> None:
-        widget = self._view_widgets[self._view]
-        number = widget.selected_issue_number
+        number = self._view_widgets[self._view].selected_issue_number
         if number is not None:
             self._marks.unmark(number)
-            widget.refresh_mark(number)
-            self._show_mark_count()
+            self._mark_changed(number)
 
     def action_unmark_all(self) -> None:
         self._marks.clear()
-        self._view_widgets[self._view].refresh_marks()
+        for widget in self._view_widgets.values():
+            widget.refresh_marks()
+        self._show_mark_count()
+
+    def _mark_changed(self, number: int) -> None:
+        """Every view re-renders, not just the visible one: `g` can
+        show the tree again without reloading it."""
+        for widget in self._view_widgets.values():
+            widget.refresh_mark(number)
         self._show_mark_count()
 
     def _show_mark_count(self) -> None:

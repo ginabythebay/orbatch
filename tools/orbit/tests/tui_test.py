@@ -2826,6 +2826,19 @@ class TestBatchGlyphsReachEverySurface:
                 assert str(option.prompt).startswith(" s #905")
 
 
+_MIXED_FLAT = [
+    MilestoneIssue(
+        number=number, state=state, title=title, parent_number=905, is_epic=False
+    )
+    for number, state, title in (
+        (30, "OPEN", "live a"),
+        (31, "CLOSED", "done a"),
+        (32, "CLOSED", "done b"),
+        (33, "OPEN", "live b"),
+    )
+]
+
+
 def _mark_count_text(app: OrbitApp) -> str:
     bar = app.query_one(StatusBar)
     return str(bar.query_one("#mark-count", Static).content)
@@ -3075,3 +3088,115 @@ class TestMarks:
                 assert _mark_count_text(app) == ""
                 assert not run.is_expanded
                 assert not any(_marked(node) for node in tree.root.children)
+
+    @pytest.mark.asyncio
+    async def test_u_and_capital_u_re_render_the_list_in_place(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", f"{MARK}  #21"]
+                await pilot.press("u")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", "   #21"]
+                assert issue_list.highlighted == 1
+                await pilot.press("U")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_capital_u_with_hidden_closed_rows_in_a_list(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=_MIXED_FLAT),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("U")
+                await _settle(pilot)
+                assert app.is_running
+                assert _mark_count_text(app) == ""
+                assert not any(
+                    prompt.startswith(MARK) for prompt in _prompts(issue_list)
+                )
+
+    @pytest.mark.asyncio
+    async def test_space_in_a_list_hops_over_a_placeholder_row(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=_MIXED_FLAT),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                assert issue_list.selected_issue_number == 30
+                await pilot.press("space")
+                await _settle(pilot)
+                assert issue_list.selected_issue_number == 33
+                assert _prompts(issue_list)[0] == f"{MARK}  #30"
+
+    @pytest.mark.asyncio
+    async def test_a_mark_change_reaches_a_view_goto_reveals_without_reloading(
+        self,
+    ) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("b")
+                await _settle(pilot)
+                await pilot.press("U")
+                await _settle(pilot)
+                await pilot.press("g")
+                await _settle(pilot)
+                await pilot.press("9", "0", "5", "enter")
+                await _settle(pilot)
+                assert tree.display
+                assert not _marked(tree.root.children[0])
+
+    @pytest.mark.asyncio
+    async def test_mark_keys_are_blocked_behind_the_help_modal(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                assert isinstance(app.screen, HelpScreen)
+                await pilot.press("U")
+                await pilot.press("up")
+                await pilot.press("u")
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                assert [_marked(node) for node in tree.root.children[:2]] == [
+                    True,
+                    False,
+                ]
+                assert _mark_count_text(app) == "1 marked"

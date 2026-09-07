@@ -292,13 +292,11 @@ class IssueTree(Tree[TreeItemData]):
         return data.label(data.number in self._marks)
 
     def refresh_mark(self, number: int) -> None:
-        """Re-render `number`'s row from the marks store, in place."""
         node = self._find_node(number)
         if node is not None and isinstance(node.data, IssueNodeData):
             node.set_label(self._label(node.data))
 
     def refresh_marks(self) -> None:
-        """Re-render every issue row from the marks store, in place."""
         for node in self._walk(self.root):
             if isinstance(node.data, IssueNodeData):
                 node.set_label(self._label(node.data))
@@ -734,16 +732,21 @@ class IssueList(OptionList):
             marked=issue.number in self._marks,
         )
 
+    def _refresh_option(self, index: int) -> None:
+        option_id = self.get_option_at_index(index).id
+        if option_id is not None:
+            self.replace_option_prompt_at_index(
+                index, self._prompt(self._issues[int(option_id)])
+            )
+
     def refresh_mark(self, number: int) -> None:
-        """Re-render `number`'s row from the marks store, in place."""
-        issue = self._issues.get(number)
-        if issue is not None:
-            self.replace_option_prompt(str(number), self._prompt(issue))
+        for index in range(self.option_count):
+            if self.get_option_at_index(index).id == str(number):
+                self._refresh_option(index)
 
     def refresh_marks(self) -> None:
-        """Re-render every issue row from the marks store, in place."""
-        for number in self._issues:
-            self.refresh_mark(number)
+        for index in range(self.option_count):
+            self._refresh_option(index)
 
     def load_issues(self, issues: Sequence[Issue], select: int | None = None) -> None:
         self.clear_options()
