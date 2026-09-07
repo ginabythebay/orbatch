@@ -28,6 +28,5 @@ _WARNING_GLYPHS = frozenset({glyph((BatchLabel.STUCK,)), CONFLICT})
 
 
 def glyph_span(labels: Sequence[str]) -> tuple[str, Palette | str]:
-    """The batch-state glyph and the style it carries."""
     mark = glyph(labels)
     return mark, Palette.WARNING if mark in _WARNING_GLYPHS else ""

@@ -294,3 +294,22 @@ class TestGlyphColumn:
         lines = [line for line in out.getvalue().split("\n") if line.strip()]
         assert [line[0] for line in lines] == ["q", "s"]
         assert lines[1].index("#31") > lines[0].index("#30")
+
+    def test_epic_table_gives_the_glyph_its_own_leading_column(self) -> None:
+        rows: list[Epic | FilteredRun] = [
+            Epic(
+                number=905,
+                state="OPEN",
+                title="Stuck epic",
+                open_count=1,
+                total_count=2,
+                labels=("stuck",),
+            ),
+            FilteredRun(count=2, numbers=(1, 2)),
+            Epic(number=852, state="OPEN", title="Plain", open_count=1, total_count=1),
+        ]
+        out = io.StringIO()
+        print_epic_table(rows, out)
+        lines = [line for line in out.getvalue().split("\n") if line]
+        assert [line[0] for line in lines] == ["s", " ", " "]
+        assert [line.index("#") for line in lines if "#" in line] == [3, 3]

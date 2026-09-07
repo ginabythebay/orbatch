@@ -24,10 +24,11 @@ from textual.screen import ModalScreen, Screen, ScreenResultType
 from textual.widgets import Input, Markdown, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ghgql.labels import BatchLabel
 from orbit.config import CustomCommand
 from orbit.github.client import GitHubClient
 from orbit.github.models import IssueDetail
-from orbit.palette import Palette
+from orbit.palette import Palette, glyph_span
 from orbit.tui.widgets import issue_text
 
 _KEYBINDINGS = [
@@ -89,6 +90,12 @@ class ClosableModalScreen(ModalScreen[ScreenResultType]):
         self.dismiss(None)
 
 
+_GLYPH_LEGEND: tuple[tuple[tuple[str, ...], str], ...] = (
+    *(((label.value,), label.value) for label in BatchLabel),
+    (tuple(BatchLabel)[:2], "more than one batch label"),
+)
+
+
 @final
 class HelpScreen(ClosableModalScreen[None]):
     """Centered overlay listing all keybindings.
@@ -141,6 +148,11 @@ class HelpScreen(ClosableModalScreen[None]):
         ):
             text.append_text(sample)
             text.append("\n")
+        text.append("\nbatch state\n\n", Palette.EMPHASIS)
+        for names, description in _GLYPH_LEGEND:
+            text.append(" " * 7)
+            text.append(*glyph_span(names))
+            text.append(f"  {description}\n")
         yield Static(text, id="help-panel")
 
 
@@ -271,7 +283,7 @@ class EpicPickerScreen(ClosableModalScreen[int | None]):
                 continue
             picker.add_option(
                 Option(
-                    issue_text(epic.number, epic.state, epic.title),
+                    issue_text(epic.number, epic.state, epic.title, labels=epic.labels),
                     id=str(epic.number),
                 )
             )

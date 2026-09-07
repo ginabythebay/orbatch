@@ -113,3 +113,32 @@ class TestFilteredRuns:
         assert isinstance(first, TreeNode)
         assert first.number == 31
         assert node.children[1] == FilteredRun(count=2, numbers=(32, 33))
+
+
+class TestLabelsSurvive:
+    def test_build_tree_carries_labels_at_every_depth(self) -> None:
+        data = [
+            SubIssueData(
+                number=2,
+                state="OPEN",
+                title="Epic",
+                labels=("queued",),
+                children=(
+                    _leaf(3, "CLOSED"),
+                    SubIssueData(
+                        number=4,
+                        state="OPEN",
+                        title="Deep",
+                        labels=("stuck",),
+                        children=(),
+                    ),
+                ),
+            ),
+        ]
+        items = build_tree(data, filter_open)
+        epic = items[0]
+        assert isinstance(epic, TreeNode)
+        assert epic.labels == ("queued",)
+        survivor = epic.children[-1]
+        assert isinstance(survivor, TreeNode)
+        assert survivor.labels == ("stuck",)

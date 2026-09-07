@@ -21,6 +21,7 @@ from textual.worker import WorkerError
 
 from ghgql.errors import IssueNotFoundError
 from ghgql.fake import FakeTransport
+from ghgql.labels import CONFLICT, BatchLabel, glyph
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL
 from orbit.config import CommandMode, CustomCommand, Milestones, ProjectConfig
@@ -1470,6 +1471,18 @@ class TestHelpModal:
                 assert all(line.index("#") == 2 for line in samples)
 
     @pytest.mark.asyncio
+    async def test_the_legend_names_every_glyph(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                for label in BatchLabel:
+                    assert f"{glyph((label,))}  {label.value}" in panel
+                assert f"{CONFLICT}  more than one batch label" in panel
+
+    @pytest.mark.asyncio
     async def test_main_screen_actions_blocked_while_modal_open(self) -> None:
         with (
             _patched_github() as client,
@@ -2681,3 +2694,114 @@ class TestGotoStandalone:
                 assert tree.selected_issue_number == 30
                 assert tree.hide_closed
                 assert "Jumped to #30" in _status_text(app)
+
+
+_GLYPH_EPICS = [
+    Epic(
+        number=905,
+        state="OPEN",
+        title="orbit dev tool",
+        open_count=1,
+        total_count=1,
+        labels=("stuck",),
+    )
+]
+
+_GLYPH_SUBS = [
+    SubIssueData(
+        number=910, state="OPEN", title="leaf a", children=(), labels=("queued",)
+    ),
+    SubIssueData(
+        number=911,
+        state="OPEN",
+        title="nested epic",
+        labels=("planned",),
+        children=(
+            SubIssueData(
+                number=912,
+                state="OPEN",
+                title="deep",
+                children=(),
+                labels=("implementing",),
+            ),
+        ),
+    ),
+]
+
+_GLYPH_FLAT = [
+    MilestoneIssue(
+        number=20,
+        state="OPEN",
+        title="flat a",
+        parent_number=905,
+        is_epic=False,
+        labels=("ready-for-review",),
+    )
+]
+
+
+@contextmanager
+def _glyph_github() -> Generator[GitHubClient]:
+    with (
+        _patched_github() as client,
+        patch.object(client, "list_epics_by_milestone", return_value=_GLYPH_EPICS),
+        patch.object(client, "fetch_sub_issue_tree", return_value=_GLYPH_SUBS),
+        patch.object(client, "list_issues_by_milestone", return_value=_GLYPH_FLAT),
+    ):
+        yield client
+
+
+class TestBatchGlyphsReachEverySurface:
+    @pytest.mark.asyncio
+    async def test_epic_rows_and_every_sub_issue_depth_carry_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                tree = app.query_one(IssueTree)
+                epic = tree.root.children[0]
+                nested = epic.children[1]
+                nested.expand()
+                await _settle(pilot)
+                assert str(epic.label).startswith("s ")
+                assert [str(c.label)[0] for c in epic.children] == ["q", "p"]
+                assert str(nested.children[0].label).startswith("i ")
+
+    @pytest.mark.asyncio
+    async def test_hide_closed_children_keep_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                epic = app.query_one(IssueTree).root.children[0]
+                assert [str(c.label)[0] for c in epic.children] == ["q", "p"]
+
+    @pytest.mark.asyncio
+    async def test_the_flat_list_rows_carry_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                option = app.query_one("#sprint-list", IssueList).get_option_at_index(0)
+                assert str(option.prompt).startswith("r #20")
+
+    @pytest.mark.asyncio
+    async def test_the_epic_picker_carries_the_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("m")
+                await _settle(pilot)
+                screen = app.screen
+                assert isinstance(screen, EpicPickerScreen)
+                option = screen.query_one(OptionList).get_option_at_index(0)
+                assert str(option.prompt).startswith("s #905")

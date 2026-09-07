@@ -9,7 +9,7 @@ from ghgql.labels import BatchLabel
 from orbit.github.models import Issue
 from orbit.palette import Palette
 from orbit.text_output import print_issue_table
-from orbit.tui.widgets import issue_text
+from orbit.tui.widgets import filtered_text, issue_text
 
 
 def _glyph_style(text: Text) -> str:
@@ -65,3 +65,11 @@ class TestSurfacesAgree:
             out.getvalue()[0]
             == issue_text(42, "OPEN", "A title", labels=labels).plain[0]
         )
+
+
+class TestFilteredText:
+    def test_a_run_row_reserves_the_same_blank_glyph_column(self) -> None:
+        run = filtered_text(3)
+        issue = issue_text(1, "OPEN", "t")
+
+        assert run.plain.index("<") == issue.plain.index("#")

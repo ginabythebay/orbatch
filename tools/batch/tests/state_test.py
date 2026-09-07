@@ -1,8 +1,11 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
+import batch.state
 from batch.agent import PlanningAgent
 from batch.github.client import TARGETS_PER_QUERY
 from batch.models import (
@@ -34,7 +37,7 @@ from batch.testing.payloads import (
 )
 from ghgql.errors import IssueNotFoundError
 from ghgql.fake import Errors, Response
-from ghgql.labels import BatchLabel, batch_labels
+from ghgql.labels import BatchLabel
 
 
 class TestBatch:
@@ -83,19 +86,21 @@ class TestBatch:
         assert "implementing" in str(exc_info.value)
         assert "stuck" in str(exc_info.value)
 
-    def test_state_shares_one_parse_with_ghgql(self) -> None:
-        names = ("soon", "implementing", "epic", "stuck")
+    def test_state_has_no_parse_of_its_own(self) -> None:
         issue = ChildIssue(
             node_id="I_7",
             number=7,
             state="OPEN",
             title="Issue 7",
             body="",
-            labels=names,
+            labels=("soon", "implementing", "epic", "stuck"),
             closed_by_merge=False,
         )
 
-        assert _batch_labels(issue) == batch_labels(names)
+        with patch.object(batch.state, "batch_labels", return_value=[]) as shared:
+            assert _batch_labels(issue) == []
+
+        shared.assert_called_once_with(issue.labels)
 
     def test_non_batch_labels_are_ignored(self) -> None:
         response = children(
