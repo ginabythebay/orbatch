@@ -306,12 +306,13 @@ def _status_text(app: OrbitApp) -> str:
 
 
 def _label(node: TreeNode[TreeItemData]) -> str:
-    """A node's rendered label, minus the blank batch-glyph column.
+    """A node's rendered label, minus the blank mark and batch-glyph
+    columns.
 
-    Stripping it keeps these assertions about tree structure;
-    `widgets_test` covers the glyph itself.
+    Stripping them keeps these assertions about tree structure;
+    `widgets_test` covers the glyphs themselves.
     """
-    return str(node.label).removeprefix("  ")
+    return str(node.label).removeprefix("   ")
 
 
 def _root_labels(tree: IssueTree) -> list[str]:
@@ -1241,7 +1242,7 @@ class TestStandaloneSection:
                 tree = _the_app(pilot).query_one(IssueTree)
                 section = tree.root.children[-1]
                 assert [str(child.label) for child in section.children] == [
-                    "q #30 solo a"
+                    " q #30 solo a"
                 ]
 
     @pytest.mark.asyncio
@@ -1468,7 +1469,7 @@ class TestHelpModal:
                     line for line in panel.split("\n") if line.lstrip().startswith("#")
                 ]
                 assert len(samples) == 3
-                assert all(line.index("#") == 2 for line in samples)
+                assert all(line.index("#") == 3 for line in samples)
 
     @pytest.mark.asyncio
     async def test_the_legend_names_every_glyph(self) -> None:
@@ -2765,9 +2766,9 @@ class TestBatchGlyphsReachEverySurface:
                 nested = epic.children[1]
                 nested.expand()
                 await _settle(pilot)
-                assert str(epic.label).startswith("s ")
-                assert [str(c.label)[0] for c in epic.children] == ["q", "p"]
-                assert str(nested.children[0].label).startswith("i ")
+                assert str(epic.label).startswith(" s ")
+                assert [str(c.label)[1] for c in epic.children] == ["q", "p"]
+                assert str(nested.children[0].label).startswith(" i ")
 
     @pytest.mark.asyncio
     async def test_hide_closed_children_keep_their_glyph(self) -> None:
@@ -2780,7 +2781,7 @@ class TestBatchGlyphsReachEverySurface:
                 await pilot.press("right")
                 await _settle(pilot)
                 epic = app.query_one(IssueTree).root.children[0]
-                assert [str(c.label)[0] for c in epic.children] == ["q", "p"]
+                assert [str(c.label)[1] for c in epic.children] == ["q", "p"]
 
     @pytest.mark.asyncio
     async def test_the_flat_list_rows_carry_their_glyph(self) -> None:
@@ -2791,7 +2792,7 @@ class TestBatchGlyphsReachEverySurface:
                 await pilot.press("c")
                 await _settle(pilot)
                 option = app.query_one("#sprint-list", IssueList).get_option_at_index(0)
-                assert str(option.prompt).startswith("r #20")
+                assert str(option.prompt).startswith(" r #20")
 
     @pytest.mark.asyncio
     async def test_the_epic_picker_carries_the_glyph(self) -> None:
@@ -2804,4 +2805,4 @@ class TestBatchGlyphsReachEverySurface:
                 screen = app.screen
                 assert isinstance(screen, EpicPickerScreen)
                 option = screen.query_one(OptionList).get_option_at_index(0)
-                assert str(option.prompt).startswith("s #905")
+                assert str(option.prompt).startswith(" s #905")

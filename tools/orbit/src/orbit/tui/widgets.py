@@ -29,6 +29,8 @@ from orbit.palette import Palette, glyph_span
 from orbit.text_output import filtered_run_label
 from orbit.tree import FilteredRun, TreeItem, build_tree
 
+MARK = "*"
+
 
 def issue_text(
     number: int,
@@ -37,15 +39,18 @@ def issue_text(
     open_count: int | None = None,
     total_count: int | None = None,
     labels: Sequence[str] = (),
+    marked: bool = False,
 ) -> Text:
     """Render an issue as a single styled line.
 
     Closed issues are dimmed green; epic nodes show open/total counts.
-    The leading batch-state glyph is one character wide whether or not
-    the issue carries a batch label, so titles stay aligned.
+    The two leading glyph columns — the mark, then the batch state —
+    are each one character wide whether or not they apply, so titles
+    stay aligned.
     """
     closed = state == "CLOSED"
     text = Text()
+    text.append(MARK if marked else " ", Palette.KEY)
     text.append(*glyph_span(labels))
     text.append(f" #{number}", Palette.CLOSED if closed else Palette.EMPHASIS)
     if open_count is not None and total_count is not None:
@@ -64,7 +69,7 @@ def filtered_text(
 ) -> Text:
     """Render a run of filtered-out issues as a single dimmed line."""
     text = Text()
-    text.append(f"{NO_LABEL} ")
+    text.append(f" {NO_LABEL} ")
     if open_count is not None and total_count is not None:
         text.append(f"{open_count}/{total_count} ", Palette.CLOSED)
     text.append(filtered_run_label(count), Palette.CLOSED)
