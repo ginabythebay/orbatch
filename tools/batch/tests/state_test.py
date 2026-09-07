@@ -1,11 +1,8 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
-import batch.state
 from batch.agent import PlanningAgent
 from batch.github.client import TARGETS_PER_QUERY
 from batch.models import (
@@ -86,7 +83,7 @@ class TestBatch:
         assert "implementing" in str(exc_info.value)
         assert "stuck" in str(exc_info.value)
 
-    def test_state_has_no_parse_of_its_own(self) -> None:
+    def test_state_reads_the_shared_batch_label_vocabulary(self) -> None:
         issue = ChildIssue(
             node_id="I_7",
             number=7,
@@ -97,10 +94,7 @@ class TestBatch:
             closed_by_merge=False,
         )
 
-        with patch.object(batch.state, "batch_labels", return_value=[]) as shared:
-            assert _batch_labels(issue) == []
-
-        shared.assert_called_once_with(issue.labels)
+        assert _batch_labels(issue) == [BatchLabel.IMPLEMENTING, BatchLabel.STUCK]
 
     def test_non_batch_labels_are_ignored(self) -> None:
         response = children(

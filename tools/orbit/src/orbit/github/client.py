@@ -119,7 +119,7 @@ query($milestone: String!, $owner: String!, $name: String!, $labels: [String!], 
             parent {
               number
             }
-            labels(first: 20) {
+            labels(first: 100) {
               nodes {
                 name
               }
@@ -142,7 +142,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           number
           state
           title
-          labels(first: 20) { nodes { name } }
+          labels(first: 100) { nodes { name } }
           subIssues(first: 100) {
             totalCount
           }
@@ -198,7 +198,7 @@ query($milestone: String!, $owner: String!, $name: String!, $after: String) {
             number
             state
             title
-            labels(first: 20) { nodes { name } }
+            labels(first: 100) { nodes { name } }
             subIssues(first: 100) {
               totalCount
               nodes {
@@ -221,7 +221,7 @@ query($q: String!) {
         number
         state
         title
-        labels(first: 20) { nodes { name } }
+        labels(first: 100) { nodes { name } }
       }
     }
   }

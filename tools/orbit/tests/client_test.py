@@ -204,7 +204,7 @@ class TestListIssuesByMilestone:
         issues = _client(transport).list_issues_by_milestone(_MILESTONE)
         query = transport.calls[0].query_text
         assert "parent" in query
-        assert "labels(first: 20)" in query
+        assert "labels(first: 100)" in query
         assert [(i.number, i.parent_number, i.is_epic) for i in issues] == [
             (905, None, True),
             (906, 905, False),
@@ -395,6 +395,7 @@ class TestListEpicsByMilestone:
         )
         epics = _client(transport).list_epics_by_milestone(_MILESTONE)
         assert [epic.labels for epic in epics] == [("stuck",), ()]
+        assert "labels(first: 100)" in transport.calls[0].query_text
 
     def test_concatenates_two_pages_of_epics(self) -> None:
         transport = FakeTransport(
@@ -708,8 +709,10 @@ class TestFetchSubIssueTree:
                 },
             ]
         )
-        result = _client(FakeTransport([response])).fetch_sub_issue_tree(1)
+        transport = FakeTransport([response])
+        result = _client(transport).fetch_sub_issue_tree(1)
         assert [sub.labels for sub in result] == [("implementing",), ()]
+        assert "labels(first: 100)" in transport.calls[0].query_text
 
     def test_returns_empty_when_issue_not_found(self) -> None:
         response: dict[str, object] = {"repository": {"issue": None}}
@@ -948,8 +951,10 @@ class TestSearchIssueTitles:
                 ]
             }
         }
-        issues = _client(FakeTransport([response])).search_issue_titles("x")
+        transport = FakeTransport([response])
+        issues = _client(transport).search_issue_titles("x")
         assert [issue.labels for issue in issues] == [("ready-for-review",), ()]
+        assert "labels(first: 100)" in transport.calls[0].query_text
 
     def test_skips_non_issue_nodes(self) -> None:
         response = {
