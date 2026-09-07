@@ -35,6 +35,7 @@ from orbit.github.models import (
     Surface,
 )
 from orbit.github.orchestrators import close_issue, move_issue, schedule_issue
+from orbit.marks import Marks
 from orbit.tui.screens import (
     BranchPromptScreen,
     DetailScreen,
@@ -70,6 +71,9 @@ _MAIN_SCREEN_ACTIONS = frozenset(
         "edit",
         "custom_command",
         "goto_issue",
+        "mark_toggle",
+        "unmark",
+        "unmark_all",
     }
 )
 
@@ -112,6 +116,9 @@ class OrbitApp(App[None]):
         Binding("x", "close_issue", "Close"),
         Binding("t", "edit", "Edit in browser"),
         Binding("g", "goto_issue", "Go to issue"),
+        Binding("space", "mark_toggle", "Mark", show=False),
+        Binding("u", "unmark", "Unmark", show=False),
+        Binding("U", "unmark_all", "Unmark all", show=False),
         Binding("question_mark", "help", "Help", key_display="?"),
         # Both only fire on the main screen: every other screen inherits
         # ClosableScreen, whose q/escape close it and shadow these. Both
@@ -145,13 +152,16 @@ class OrbitApp(App[None]):
         self._commands = tuple(commands)
         for index, command in enumerate(self._commands):
             self._bindings.bind(command.key, f"custom_command({index})", command.label)
-        self._tree = IssueTree(id="epic-tree")
+        self._marks = Marks()
+        self._tree = IssueTree(self._marks, id="epic-tree")
         self._sprint_list = IssueList(
+            self._marks,
             id="sprint-list",
             milestone=milestones.current,
             item_name="sprint issues",
         )
         self._backlog_list = IssueList(
+            self._marks,
             id="backlog-list",
             milestone=milestones.backlog,
             item_name="backlog issues",
@@ -445,6 +455,31 @@ class OrbitApp(App[None]):
                 self._launch(command, issue_number, branch)
 
         self.push_screen(BranchPromptScreen(command.label), _on_branch)
+
+    def action_mark_toggle(self) -> None:
+        widget = self._view_widgets[self._view]
+        number = widget.selected_issue_number
+        if number is not None:
+            self._marks.toggle(number)
+            widget.refresh_mark(number)
+            self._show_mark_count()
+        widget.advance()
+
+    def action_unmark(self) -> None:
+        widget = self._view_widgets[self._view]
+        number = widget.selected_issue_number
+        if number is not None:
+            self._marks.unmark(number)
+            widget.refresh_mark(number)
+            self._show_mark_count()
+
+    def action_unmark_all(self) -> None:
+        self._marks.clear()
+        self._view_widgets[self._view].refresh_marks()
+        self._show_mark_count()
+
+    def _show_mark_count(self) -> None:
+        self.query_one(StatusBar).set_mark_count(self._marks.count)
 
     def action_goto_issue(self) -> None:
         def _on_number(number: int | None) -> None:

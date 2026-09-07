@@ -50,6 +50,7 @@ from orbit.tui.screens import (
     MilestonePickerScreen,
 )
 from orbit.tui.widgets import (
+    MARK,
     FilteredNodeData,
     IssueList,
     IssueTree,
@@ -1458,6 +1459,18 @@ class TestHelpModal:
                 assert "f  Toggle hide-closed" in panel
 
     @pytest.mark.asyncio
+    async def test_lists_the_mark_keys(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                assert "space  Mark issue and advance" in panel
+                assert "u  Unmark issue" in panel
+                assert "U  Unmark all" in panel
+
+    @pytest.mark.asyncio
     async def test_the_color_legend_keeps_the_blank_glyph_column(self) -> None:
         with _patched_github() as client:
             async with _app(client).run_test() as pilot:
@@ -1899,6 +1912,11 @@ class TestReservedKeys:
         assert len(declared) == len(OrbitApp.BINDINGS)
         # The exit keys are the ones a config most plausibly reaches for.
         assert {"q", "escape"} <= reserved
+
+    def test_the_mark_keys_are_reserved(self) -> None:
+        # space is also bound on IssueTree to beat Tree's toggle_node;
+        # reserved_keys() reads only the app, so it must be here too.
+        assert {"space", "u", "U"} <= OrbitApp.reserved_keys()
 
 
 class TestCustomCommands:
@@ -2806,3 +2824,254 @@ class TestBatchGlyphsReachEverySurface:
                 assert isinstance(screen, EpicPickerScreen)
                 option = screen.query_one(OptionList).get_option_at_index(0)
                 assert str(option.prompt).startswith(" s #905")
+
+
+def _mark_count_text(app: OrbitApp) -> str:
+    bar = app.query_one(StatusBar)
+    return str(bar.query_one("#mark-count", Static).content)
+
+
+def _marked(node: TreeNode[TreeItemData]) -> bool:
+    return str(node.label).startswith(MARK)
+
+
+def _prompts(issue_list: IssueList) -> list[str]:
+    """Each row's two glyph columns and number, title dropped."""
+    prompts = [
+        str(issue_list.get_option_at_index(i).prompt)
+        for i in range(issue_list.option_count)
+    ]
+    return [prompt[: prompt.index(" ", 3)] for prompt in prompts]
+
+
+class TestMarks:
+    @pytest.mark.asyncio
+    async def test_space_in_the_tree_toggles_the_cursor_row_and_advances(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                first, second = tree.root.children[:2]
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(first)
+                assert not _marked(second)
+                assert tree.cursor_node is second
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert not _marked(first)
+
+    @pytest.mark.asyncio
+    async def test_space_in_the_tree_leaves_expansion_alone(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(client, "fetch_sub_issue_tree") as mock_subs,
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                epic = tree.root.children[0]
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(epic)
+                assert not epic.is_expanded
+                mock_subs.assert_not_called()
+                epic.expand()
+                await _settle(pilot)
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert not _marked(epic)
+                assert epic.is_expanded
+
+    @pytest.mark.asyncio
+    async def test_space_in_the_list_toggles_the_cursor_row_and_advances(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", "   #21"]
+                assert issue_list.highlighted == 1
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_u_unmarks_the_cursor_row_without_advancing(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                first = tree.root.children[0]
+                await pilot.press("space")
+                await pilot.press("up")
+                await _settle(pilot)
+                assert _marked(first)
+                await pilot.press("u")
+                await _settle(pilot)
+                assert not _marked(first)
+                assert tree.cursor_node is first
+                await pilot.press("u")
+                await _settle(pilot)
+                assert not _marked(first)
+                assert tree.cursor_node is first
+
+    @pytest.mark.asyncio
+    async def test_space_on_the_last_tree_row_marks_and_stays_put(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                last = tree.root.children[-1]
+                await pilot.press("end")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(last)
+                assert tree.cursor_node is last
+
+    @pytest.mark.asyncio
+    async def test_space_on_the_last_list_row_marks_and_stays_put(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("end")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", f"{MARK}  #21"]
+                assert issue_list.highlighted == 1
+
+    @pytest.mark.asyncio
+    async def test_capital_u_clears_marks_made_in_more_than_one_view(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("e")
+                await _settle(pilot)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(tree.root.children[0])
+                await pilot.press("U")
+                await _settle(pilot)
+                assert not _marked(tree.root.children[0])
+                await pilot.press("c")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_marks_survive_a_refresh(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(
+                client, "list_epics_by_milestone", return_value=_EPICS
+            ) as mock_epics,
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("r")
+                await _settle(pilot)
+                assert mock_epics.call_count == 2
+                assert [_marked(node) for node in tree.root.children] == [
+                    True,
+                    True,
+                    False,
+                    False,
+                    False,
+                ]
+
+    @pytest.mark.asyncio
+    async def test_marks_survive_switching_views(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("e")
+                await _settle(pilot)
+                await pilot.press("b")
+                await _settle(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_marks_follow_the_issue_number_when_rows_reorder(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await _settle(pilot)
+                with patch.object(
+                    client,
+                    "list_issues_by_milestone",
+                    return_value=list(reversed(_FLAT_ISSUES)),
+                ):
+                    await pilot.press("r")
+                    await _settle(pilot)
+                assert _prompts(issue_list) == ["   #21", f"{MARK}  #20"]
+
+    @pytest.mark.asyncio
+    async def test_the_status_bar_counts_marks_the_current_view_hides(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                assert _mark_count_text(app) == ""
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("e")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "1 marked"
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "2 marked"
+                await pilot.press("U")
+                await _settle(pilot)
+                assert _mark_count_text(app) == ""
+
+    @pytest.mark.asyncio
+    async def test_space_on_a_placeholder_row_marks_nothing(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
+                await pilot.press("down")
+                run = tree.cursor_node
+                assert run is not None
+                assert isinstance(run.data, FilteredNodeData)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == ""
+                assert not run.is_expanded
+                assert not any(_marked(node) for node in tree.root.children)

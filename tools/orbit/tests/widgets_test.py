@@ -11,7 +11,6 @@ from orbit.palette import Palette
 from orbit.text_output import print_issue_table
 from orbit.tui.widgets import MARK, filtered_text, issue_text
 
-
 _BATCH_COLUMN = 1
 
 
