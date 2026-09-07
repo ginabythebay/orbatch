@@ -38,8 +38,8 @@ def main_repo_for(ctx: click.Context) -> Path:
 def config_for(ctx: click.Context) -> BatchConfig:
     """The repo's `batch.toml`, read once per invocation and cached.
 
-    Cached on `ctx.meta` rather than `ctx.obj`, which the isinstance
-    dispatch in the other resolvers already claims for injected fakes.
+    Cached on `ctx.meta` rather than `ctx.obj`, which the isinstance dispatch
+    in `batch.cli`'s resolvers already claims for injected fakes.
     """
     cached = ctx.meta.get(CONFIG_KEY)
     if isinstance(cached, BatchConfig):

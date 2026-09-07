@@ -278,6 +278,7 @@ class TestCommandLine:
         *,
         group_args: Sequence[str] = (),
         cwd: Path | None = None,
+        code: int = 0,
     ) -> tuple[Result, list[tuple[str, ...]]]:
         _configured(sc)
         monkeypatch.chdir(sc.repo if cwd is None else cwd)
@@ -285,7 +286,7 @@ class TestCommandLine:
 
         def record(self: CliConsole, slot: Slot, config_dir: Path) -> int:
             spawned.append(self.command(slot, config_dir))
-            return 0
+            return code
 
         monkeypatch.setattr(CliConsole, "boot", record)
         invocation = [*group_args, "vwt", *args]
@@ -309,6 +310,14 @@ class TestCommandLine:
         [command] = spawned
         relative = str((sc.trees / "fix-thing").relative_to(sc.repo.parent.parent))
         assert command[:3] == (TEST_COMMANDS.cli, "--repo", relative)
+
+    def test_a_failed_console_becomes_the_process_exit_code(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, spawned = self._invoke(sc, monkeypatch, ["fix-thing"], code=3)
+
+        assert result.exit_code == 3, result.output
+        assert spawned
 
     def test_the_model_is_pinned_and_the_short_flags_are_honoured(
         self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
