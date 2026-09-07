@@ -7,7 +7,6 @@ import pytest
 
 from batch.models import (
     BatchIssue,
-    BatchLabel,
     TeardownOutcome,
     TeardownSkip,
     UnsafeRemovalError,
@@ -25,6 +24,7 @@ from batch.testing.payloads import (
 )
 from batch.testing.scratch import scratch
 from batch.vm import VmRunner
+from ghgql.labels import BatchLabel
 
 
 @dataclass(frozen=True)

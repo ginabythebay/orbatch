@@ -10,7 +10,6 @@ from batch.body import DEFAULT_GUIDANCE
 from batch.models import (
     DEFAULT_RAM,
     BatchIssue,
-    BatchLabel,
     DebugRefusal,
     DroppedChild,
     HaltReason,
@@ -30,6 +29,7 @@ from batch.testing.payloads import (
     closed_child,
     unlabeled_child,
 )
+from ghgql.labels import BatchLabel
 
 
 @dataclass(frozen=True)

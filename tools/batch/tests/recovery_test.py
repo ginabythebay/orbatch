@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from batch.models import (
-    BatchLabel,
     ConflictingLabelsError,
     RecoveryAction,
     RecoveryRefusal,
@@ -23,6 +22,7 @@ from batch.testing.payloads import (
 )
 from batch.text_output import recovery_line
 from ghgql.fake import FakeTransport
+from ghgql.labels import BatchLabel
 
 
 def recovery(fake: FakeTransport, live: tuple[int, ...] = ()) -> Recovery:

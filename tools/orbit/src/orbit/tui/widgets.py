@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import ClassVar, final, override
 
 from rich.text import Text
@@ -23,27 +22,12 @@ from textual.widgets import OptionList, Static, Tree
 from textual.widgets.option_list import Option
 from textual.widgets.tree import TreeNode
 
+from ghgql.labels import NO_LABEL
 from orbit.filtering import partition_filtered
 from orbit.github.models import Epic, Issue, MilestoneIssue, SubIssueData
+from orbit.palette import Palette, glyph_span
 from orbit.text_output import filtered_run_label
 from orbit.tree import FilteredRun, TreeItem, build_tree
-
-
-class Palette(StrEnum):
-    """Every rich style the TUI uses, named by role.
-
-    One palette so meaning-bearing styles (closed-issue dimming,
-    error red, ...) cannot drift between the tree, the list, and the
-    detail/help screens. Members are strings and pass directly to
-    `Text.append`.
-    """
-
-    CLOSED = "dim green"
-    OPEN = "green"
-    EMPHASIS = "bold"
-    COUNT = "cyan"
-    KEY = "bold cyan"
-    ERROR = "red"
 
 
 def issue_text(
@@ -52,14 +36,18 @@ def issue_text(
     title: str,
     open_count: int | None = None,
     total_count: int | None = None,
+    labels: Sequence[str] = (),
 ) -> Text:
     """Render an issue as a single styled line.
 
     Closed issues are dimmed green; epic nodes show open/total counts.
+    The leading batch-state glyph is one character wide whether or not
+    the issue carries a batch label, so titles stay aligned.
     """
     closed = state == "CLOSED"
     text = Text()
-    text.append(f"#{number}", Palette.CLOSED if closed else Palette.EMPHASIS)
+    text.append(*glyph_span(labels))
+    text.append(f" #{number}", Palette.CLOSED if closed else Palette.EMPHASIS)
     if open_count is not None and total_count is not None:
         text.append(
             f" {open_count}/{total_count}",
@@ -76,6 +64,7 @@ def filtered_text(
 ) -> Text:
     """Render a run of filtered-out issues as a single dimmed line."""
     text = Text()
+    text.append(f"{NO_LABEL} ")
     if open_count is not None and total_count is not None:
         text.append(f"{open_count}/{total_count} ", Palette.CLOSED)
     text.append(filtered_run_label(count), Palette.CLOSED)
@@ -492,7 +481,7 @@ class IssueTree(Tree[TreeItemData]):
         self, parent: TreeNode[TreeItemData], issue: MilestoneIssue
     ) -> None:
         parent.add_leaf(
-            issue_text(issue.number, issue.state, issue.title),
+            issue_text(issue.number, issue.state, issue.title, labels=issue.labels),
             data=IssueNodeData(
                 number=issue.number, state=issue.state, title=issue.title
             ),
@@ -511,6 +500,7 @@ class IssueTree(Tree[TreeItemData]):
             epic.title,
             epic.open_count,
             epic.total_count,
+            epic.labels,
         )
         if epic.total_count > 0:
             parent.add(label, data=data)
@@ -612,7 +602,12 @@ class IssueTree(Tree[TreeItemData]):
             return
         data = IssueNodeData(number=item.number, state=item.state, title=item.title)
         label = issue_text(
-            item.number, item.state, item.title, item.open_count, item.total_count
+            item.number,
+            item.state,
+            item.title,
+            item.open_count,
+            item.total_count,
+            item.labels,
         )
         if not item.children:
             parent.add_leaf(label, data=data)
@@ -635,12 +630,16 @@ class IssueTree(Tree[TreeItemData]):
                 sub.title,
                 open_count,
                 len(sub.children),
+                sub.labels,
             )
             node = parent.add(label, data=data)
             for child in sub.children:
                 self._add_sub_issue(node, child)
         else:
-            parent.add_leaf(issue_text(sub.number, sub.state, sub.title), data=data)
+            parent.add_leaf(
+                issue_text(sub.number, sub.state, sub.title, labels=sub.labels),
+                data=data,
+            )
 
     @property
     def selected_issue_number(self) -> int | None:
@@ -705,7 +704,7 @@ class IssueList(OptionList):
                 continue
             self.add_option(
                 Option(
-                    issue_text(row.number, row.state, row.title),
+                    issue_text(row.number, row.state, row.title, labels=row.labels),
                     id=str(row.number),
                 )
             )

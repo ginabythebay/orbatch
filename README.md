@@ -10,7 +10,7 @@ Issue and batch tooling.
 | `tools/orbit` | `orbit` | GitHub issue and epic management, CLI and TUI |
 | `tools/review` | `review-diff`, `review-html` | Fresh-eyes code review over a diff or PR |
 | `tools/snippets` | `snippets` | Per-epic activity and accomplishment rollups |
-| `packages/ghgql` | — | Shared GitHub GraphQL transport and repo detection |
+| `packages/ghgql` | — | Shared GitHub GraphQL transport, repo detection and batch-label vocabulary |
 | `packages/portability` | — | Digests of the repos orbatch was extracted from, and the guard that keeps them out |
 | `packages/shellcomp` | — | Shared bash-completion helper for the click CLIs |
 

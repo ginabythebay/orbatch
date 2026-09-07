@@ -88,6 +88,40 @@ _PARENTED_GRAPHQL_RESPONSE: dict[str, object] = {
 }
 
 
+_LABELLED_GRAPHQL_RESPONSE: dict[str, object] = {
+    "repository": {
+        "milestones": {
+            "nodes": [
+                {
+                    "title": _MILESTONE,
+                    "issues": {
+                        "nodes": [
+                            {
+                                "number": 905,
+                                "state": "OPEN",
+                                "title": "An epic",
+                                "parent": None,
+                                "labels": {
+                                    "nodes": [{"name": "epic"}, {"name": "queued"}]
+                                },
+                            },
+                            {
+                                "number": 906,
+                                "state": "OPEN",
+                                "title": "Unlabelled",
+                                "parent": None,
+                                "labels": None,
+                            },
+                        ],
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    },
+                }
+            ]
+        }
+    }
+}
+
+
 def _issues_response(
     nodes: list[dict[str, object]],
     *,
@@ -175,6 +209,14 @@ class TestListIssuesByMilestone:
             (905, None, True),
             (906, 905, False),
             (907, None, False),
+        ]
+
+    def test_carries_label_names_through(self) -> None:
+        transport = FakeTransport([_LABELLED_GRAPHQL_RESPONSE])
+        issues = _client(transport).list_issues_by_milestone(_MILESTONE)
+        assert [(i.labels, i.is_epic) for i in issues] == [
+            (("epic", "queued"), True),
+            ((), False),
         ]
 
     def test_backlog_listing_still_filters_by_label(self) -> None:
@@ -339,6 +381,20 @@ class TestListEpicsByMilestone:
         assert epics[1].number == 852
         assert epics[1].open_count == 1
         assert epics[1].total_count == 4
+
+    def test_carries_label_names_through(self) -> None:
+        transport = FakeTransport(
+            [
+                _epic_response(
+                    [
+                        _epic_node(10, "OPEN", "Labelled", ["OPEN"], ["stuck"]),
+                        _epic_node(11, "OPEN", "Unlabelled", ["OPEN"], None),
+                    ]
+                )
+            ]
+        )
+        epics = _client(transport).list_epics_by_milestone(_MILESTONE)
+        assert [epic.labels for epic in epics] == [("stuck",), ()]
 
     def test_concatenates_two_pages_of_epics(self) -> None:
         transport = FakeTransport(
@@ -549,11 +605,13 @@ def _epic_node(
     state: str,
     title: str,
     sub_states: list[str],
+    labels: list[str] | None = None,
 ) -> dict[str, object]:
     return {
         "number": number,
         "state": state,
         "title": title,
+        "labels": None if labels is None else {"nodes": [{"name": n} for n in labels]},
         "subIssues": {
             "totalCount": len(sub_states),
             "nodes": [{"state": s} for s in sub_states],
@@ -630,6 +688,28 @@ class TestFetchSubIssueTree:
         assert result[0].children == ()
         assert result[1].number == 20
         assert result[1].children == ()
+
+    def test_carries_label_names_through(self) -> None:
+        response = _sub_issues_response(
+            [
+                {
+                    "number": 10,
+                    "state": "OPEN",
+                    "title": "Labelled",
+                    "labels": {"nodes": [{"name": "implementing"}]},
+                    "subIssues": {"totalCount": 0},
+                },
+                {
+                    "number": 20,
+                    "state": "OPEN",
+                    "title": "Unlabelled",
+                    "labels": None,
+                    "subIssues": {"totalCount": 0},
+                },
+            ]
+        )
+        result = _client(FakeTransport([response])).fetch_sub_issue_tree(1)
+        assert [sub.labels for sub in result] == [("implementing",), ()]
 
     def test_returns_empty_when_issue_not_found(self) -> None:
         response: dict[str, object] = {"repository": {"issue": None}}
@@ -848,6 +928,28 @@ class TestSearchIssueTitles:
         assert [i.number for i in issues] == [42, 100]
         assert issues[0].title == "guild.yaml loader"
         assert issues[1].state == "CLOSED"
+
+    def test_carries_label_names_through(self) -> None:
+        response = {
+            "search": {
+                "nodes": [
+                    {
+                        "number": 42,
+                        "state": "OPEN",
+                        "title": "Labelled",
+                        "labels": {"nodes": [{"name": "ready-for-review"}]},
+                    },
+                    {
+                        "number": 43,
+                        "state": "OPEN",
+                        "title": "Unlabelled",
+                        "labels": None,
+                    },
+                ]
+            }
+        }
+        issues = _client(FakeTransport([response])).search_issue_titles("x")
+        assert [issue.labels for issue in issues] == [("ready-for-review",), ()]
 
     def test_skips_non_issue_nodes(self) -> None:
         response = {

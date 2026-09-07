@@ -252,3 +252,45 @@ class TestFlatTableFilteredRuns:
         out = io.StringIO()
         print_issue_table(rows, out)
         assert "<1 issue filtered>" in out.getvalue()
+
+
+class TestGlyphColumn:
+    def test_issue_table_gives_the_glyph_its_own_leading_column(self) -> None:
+        rows: list[Issue | FilteredRun] = [
+            Issue(number=42, state="OPEN", title="Stuck one", labels=("stuck",)),
+            FilteredRun(count=3, numbers=(100, 101, 102)),
+            Issue(number=7, state="OPEN", title="Plain one"),
+        ]
+        out = io.StringIO()
+        print_issue_table(rows, out)
+        lines = [line for line in out.getvalue().split("\n") if line]
+        assert [line[0] for line in lines] == ["s", " ", " "]
+        assert [line.index("#") for line in lines if "#" in line] == [3, 3]
+
+    def test_sub_issue_tree_keeps_the_glyph_out_of_the_indent(self) -> None:
+        nodes: list[TreeItem] = [
+            TreeNode(
+                number=30,
+                state="OPEN",
+                title="Parent",
+                open_count=1,
+                total_count=1,
+                labels=("queued",),
+                children=(
+                    TreeNode(
+                        number=31,
+                        state="OPEN",
+                        title="Child",
+                        open_count=None,
+                        total_count=None,
+                        labels=("stuck",),
+                        children=(),
+                    ),
+                ),
+            ),
+        ]
+        out = io.StringIO()
+        print_sub_issue_tree(nodes, out)
+        lines = [line for line in out.getvalue().split("\n") if line.strip()]
+        assert [line[0] for line in lines] == ["q", "s"]
+        assert lines[1].index("#31") > lines[0].index("#30")

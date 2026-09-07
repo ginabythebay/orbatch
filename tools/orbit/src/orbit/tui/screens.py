@@ -27,7 +27,8 @@ from textual.widgets.option_list import Option
 from orbit.config import CustomCommand
 from orbit.github.client import GitHubClient
 from orbit.github.models import IssueDetail
-from orbit.tui.widgets import Palette, issue_text
+from orbit.palette import Palette
+from orbit.tui.widgets import issue_text
 
 _KEYBINDINGS = [
     ("up/down", "Move cursor"),

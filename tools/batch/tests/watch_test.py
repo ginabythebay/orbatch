@@ -3,13 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 
 from batch.models import (
-    BatchLabel,
     DroppedChild,
     HaltReason,
     IssueOutcome,
     RunResult,
 )
 from batch.watch import watch
+from ghgql.labels import BatchLabel
 
 EPIC = 1492
 

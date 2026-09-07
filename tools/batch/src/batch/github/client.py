@@ -6,8 +6,9 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from batch.body import closing_references
-from batch.models import BatchLabel, ChildIssue, CiStatus, PullRequest, Target
+from batch.models import ChildIssue, CiStatus, PullRequest, Target
 from ghgql.errors import IssueNotFoundError
+from ghgql.labels import BatchLabel
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL, RateLimit
 

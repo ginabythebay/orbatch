@@ -15,7 +15,6 @@ from batch.models import (
     AlreadyRunningError,
     Batch,
     BatchIssue,
-    BatchLabel,
     DashboardRow,
     DebugEntry,
     DebugRefusal,
@@ -36,6 +35,7 @@ from batch.text_output import teardown_line
 from batch.timings import Timings
 from batch.verbs import Verbs
 from batch.vm import agent_command, debug_agent_command, session_for
+from ghgql.labels import BatchLabel
 
 DEFAULT_TIMEOUT = 2 * 60 * 60.0
 DEFAULT_POLL_INTERVAL = 30.0

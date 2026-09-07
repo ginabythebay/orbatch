@@ -11,7 +11,6 @@ from rich.console import Console
 from batch.models import (
     Batch,
     BatchIssue,
-    BatchLabel,
     CiStatus,
     DashboardRow,
     DroppedChild,
@@ -41,6 +40,7 @@ from batch.text_output import (
     run_banner,
     status_line,
 )
+from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
 
 

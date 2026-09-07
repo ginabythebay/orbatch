@@ -194,6 +194,7 @@ def _milestone_issue(
     title: str = "An issue",
     parent: int | None = None,
     is_epic: bool = False,
+    labels: tuple[str, ...] = (),
 ) -> MilestoneIssue:
     return MilestoneIssue(
         number=number,
@@ -201,6 +202,7 @@ def _milestone_issue(
         title=title,
         parent_number=parent,
         is_epic=is_epic,
+        labels=labels,
     )
 
 
@@ -252,6 +254,14 @@ class TestSprint:
         assert [row["number"] for row in data] == [5, 6, 7]
         assert [row["parent_number"] for row in data] == [None, 5, None]
         assert [row["is_epic"] for row in data] == [True, False, False]
+
+    def test_json_carries_labels(self) -> None:
+        client = _client()
+        issues = [_milestone_issue(42, labels=("queued", "soon"))]
+        with patch.object(client, "list_issues_by_milestone", return_value=issues):
+            result = _runner().invoke(cli, ["sprint", "--json"], obj=client)
+        data = cast(list[dict[str, object]], json.loads(result.output))
+        assert data[0]["labels"] == ["queued", "soon"]
 
     def test_standalone_issues_print_under_their_own_heading(self) -> None:
         client = _client()

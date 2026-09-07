@@ -3,7 +3,6 @@ from __future__ import annotations
 from batch.agent import PlanningAgent
 from batch.models import (
     BatchIssue,
-    BatchLabel,
     DroppedChild,
     NextIssue,
     PlanRefusal,
@@ -16,6 +15,7 @@ from batch.testing.payloads import (
     closed_child,
     unlabeled_child,
 )
+from ghgql.labels import BatchLabel
 
 PLAN = "## Test Plan\n\n1. Something worth testing.\n"
 

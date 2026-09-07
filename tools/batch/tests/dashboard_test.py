@@ -11,8 +11,9 @@ from batch.dashboard import (
     last_line,
     rows,
 )
-from batch.models import Batch, BatchLabel, DashboardRow, DroppedChild, VmStatus
+from batch.models import Batch, DashboardRow, DroppedChild, VmStatus
 from batch.testing.payloads import batch_issue
+from ghgql.labels import BatchLabel
 
 EPIC = 1492
 
