@@ -114,6 +114,10 @@ class DashboardScreen(Screen[None]):
         installer = cast("Callable[[Screen[None], str], None]", app.install_screen)
         installer(self, name)
 
+    def uninstall_from(self, app: App[None]) -> None:
+        uninstaller = cast("Callable[[Screen[None]], str | None]", app.uninstall_screen)
+        _ = uninstaller(self)
+
     @property
     def live(self) -> bool:
         return not self._finished.is_set()

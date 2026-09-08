@@ -391,6 +391,7 @@ name = "orbit"
 version = "0.1.0"
 source = { editable = "tools/orbit" }
 dependencies = [
+    { name = "batch" },
     { name = "click" },
     { name = "ghgql" },
     { name = "pydantic" },
@@ -400,6 +401,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "batch", editable = "tools/batch" },
     { name = "click", specifier = ">=8.5" },
     { name = "ghgql", editable = "packages/ghgql" },
     { name = "pydantic", specifier = ">=2.0" },

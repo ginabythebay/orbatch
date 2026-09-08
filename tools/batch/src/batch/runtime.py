@@ -80,16 +80,13 @@ class Runtime:
         self.repo: Path = repo
         self.config: BatchConfig = config
         self.run_root: Path = run_root
+        self.prog: str = config.commands.cli
 
     @classmethod
     def load(cls, repo: Path, run_root: Path = DEFAULT_RUN_ROOT) -> Runtime:
         """Raises `ConfigError` when the repo carries no usable `batch.toml`."""
         config = load_config(repo)
         return cls(repo, config, scoped_run_root(run_root, config.slug).expanduser())
-
-    @property
-    def prog(self) -> str:
-        return self.config.commands.cli
 
     @cached_property
     def _client(self) -> BatchGitHub:
