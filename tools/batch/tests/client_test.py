@@ -9,6 +9,7 @@ from batch.testing.payloads import (
     children,
     client_over,
     issue,
+    label_ids,
     missing,
     pull_request,
     pull_requests,
@@ -21,6 +22,7 @@ from batch.testing.payloads import (
     epic as epic_node,
 )
 from ghgql.errors import IssueNotFoundError
+from ghgql.labels import BatchLabel
 
 _SELECTION = "closedByPullRequestsReferences"
 
@@ -132,3 +134,17 @@ class TestClosingReferences:
         fetched = client_over(fake).fetch_pull_requests("issue-9")
 
         assert [pull.closes for pull in fetched] == [(), (9,)]
+
+
+class TestLabelIds:
+    def test_the_first_lookup_fetches_every_batch_label_and_the_next_none(
+        self,
+    ) -> None:
+        fake = transport(label_ids())
+        github = client_over(fake)
+
+        assert github.label_id(BatchLabel.QUEUED) == "LA_queued"
+        assert github.label_id(BatchLabel.STUCK) == "LA_stuck"
+
+        assert len(fake.calls) == 1
+        assert set(fake.calls[0].variables.values()) >= set(BatchLabel)

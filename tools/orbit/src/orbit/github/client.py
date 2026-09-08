@@ -5,6 +5,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ghgql.issues import IssueCore, IssueMutations, LabelConnection
 from ghgql.repo import Repo, repo
 from ghgql.transport import GitHubGraphQL, GitHubTransport
 from orbit.github.models import (
@@ -246,15 +247,7 @@ query($owner: String!, $name: String!, $number: Int!) {
 """
 
 
-class _LabelName(BaseModel):
-    name: str
-
-
-class _LabelNodes(BaseModel):
-    nodes: list[_LabelName]
-
-
-def _label_names(labels: _LabelNodes | None) -> tuple[str, ...]:
+def _label_names(labels: LabelConnection | None) -> tuple[str, ...]:
     return () if labels is None else tuple(label.name for label in labels.nodes)
 
 
@@ -273,7 +266,7 @@ class _EpicIssue(BaseModel):
     number: int
     state: str
     title: str
-    labels: _LabelNodes | None = None
+    labels: LabelConnection | None = None
     sub_issues: _SubIssueNodes = Field(alias="subIssues")
 
 
@@ -315,7 +308,7 @@ class _SubIssueChild(BaseModel):
     number: int
     state: str
     title: str
-    labels: _LabelNodes | None = None
+    labels: LabelConnection | None = None
     sub_issues: _SubCount = Field(alias="subIssues")
 
 
@@ -373,14 +366,6 @@ class _ParentResponseData(BaseModel):
     repository: _ParentRepo
 
 
-class _LabelNode(BaseModel):
-    name: str
-
-
-class _LabelConnection(BaseModel):
-    nodes: list[_LabelNode]
-
-
 class _MilestoneDetail(BaseModel):
     id: str
     title: str
@@ -392,13 +377,8 @@ class _ParentDetail(BaseModel):
     title: str
 
 
-class _IssueDetailRaw(BaseModel):
-    id: str
-    number: int
-    state: str
-    title: str
+class _IssueDetailRaw(IssueCore):
     body: str
-    labels: _LabelConnection
     milestone: _MilestoneDetail | None = None
     parent: _ParentDetail | None = None
 
@@ -472,7 +452,7 @@ class _MilestoneIssueNode(BaseModel):
     state: str
     title: str
     parent: _ParentNumberNode | None = None
-    labels: _LabelNodes | None = None
+    labels: LabelConnection | None = None
 
 
 class _PeriodParentNode(BaseModel):
@@ -493,7 +473,7 @@ class _PeriodSearchNode(BaseModel):
     state: str | None = None
     created_at: datetime | None = Field(default=None, alias="createdAt")
     closed_at: datetime | None = Field(default=None, alias="closedAt")
-    labels: _LabelNodes | None = None
+    labels: LabelConnection | None = None
     parent: _PeriodParentNode | None = None
     milestone: _PeriodMilestoneNode | None = None
 
@@ -534,7 +514,7 @@ class _SearchNode(BaseModel):
     number: int | None = None
     state: str | None = None
     title: str | None = None
-    labels: _LabelNodes | None = None
+    labels: LabelConnection | None = None
 
 
 class _SearchConnection(BaseModel):
@@ -577,14 +557,6 @@ mutation($issueId: ID!, $milestoneId: ID!) {
 }
 """
 
-_SET_BODY_MUTATION = """
-mutation($issueId: ID!, $body: String!) {
-  updateIssue(input: {id: $issueId, body: $body}) {
-    clientMutationId
-  }
-}
-"""
-
 _ADD_COMMENT_MUTATION = """
 mutation($subjectId: ID!, $body: String!) {
   addComment(input: {subjectId: $subjectId, body: $body}) {
@@ -618,16 +590,6 @@ query($owner: String!, $name: String!) {
 }
 """
 
-_LABEL_ID_QUERY = """
-query($owner: String!, $name: String!, $labelName: String!) {
-  repository(owner: $owner, name: $name) {
-    label(name: $labelName) {
-      id
-    }
-  }
-}
-"""
-
 _CREATE_ISSUE_MUTATION = """
 mutation($repositoryId: ID!, $title: String!, $milestoneId: ID!, $body: String) {
   createIssue(input: {repositoryId: $repositoryId, title: $title, milestoneId: $milestoneId, body: $body}) {
@@ -640,14 +602,6 @@ mutation($repositoryId: ID!, $title: String!, $milestoneId: ID!, $body: String) 
 }
 """
 
-_ADD_LABEL_MUTATION = """
-mutation($labelableId: ID!, $labelId: ID!) {
-  addLabelsToLabelable(input: {labelableId: $labelableId, labelIds: [$labelId]}) {
-    clientMutationId
-  }
-}
-"""
-
 
 class _RepoIdRepo(BaseModel):
     id: str
@@ -655,18 +609,6 @@ class _RepoIdRepo(BaseModel):
 
 class _RepoIdResponseData(BaseModel):
     repository: _RepoIdRepo
-
-
-class _LabelIdNode(BaseModel):
-    id: str
-
-
-class _LabelIdRepo(BaseModel):
-    label: _LabelIdNode | None = None
-
-
-class _LabelIdResponseData(BaseModel):
-    repository: _LabelIdRepo
 
 
 class _CreatedIssueNode(BaseModel):
@@ -740,6 +682,7 @@ class GitHubClient:
     def __init__(self, graphql: GitHubGraphQL, repo: Repo) -> None:
         self._graphql: GitHubGraphQL = graphql
         self.repo: Repo = repo
+        self._issues: IssueMutations = IssueMutations(graphql, repo)
 
     def _fetch_milestone_issues[T](
         self,
@@ -1092,11 +1035,7 @@ class GitHubClient:
         )
 
     def set_issue_body(self, issue_node_id: str, body: str) -> None:
-        self._graphql.run(
-            _SET_BODY_MUTATION,
-            issueId=issue_node_id,
-            body=body,
-        )
+        self._issues.set_issue_body(issue_node_id, body)
 
     def fetch_repository_id(self) -> str:
         owner, name = self.repo
@@ -1105,14 +1044,7 @@ class GitHubClient:
         return response.repository.id
 
     def fetch_label_id(self, label_name: str) -> str:
-        owner, name = self.repo
-        raw = self._graphql.run(
-            _LABEL_ID_QUERY, owner=owner, name=name, labelName=label_name
-        )
-        response = _LabelIdResponseData.model_validate(raw)
-        if response.repository.label is None:
-            raise RuntimeError(f"Label {label_name!r} not found")
-        return response.repository.label.id
+        return self._issues.label_id(label_name)
 
     def create_issue(
         self,
@@ -1134,11 +1066,7 @@ class GitHubClient:
         return CreatedIssue(node_id=node.id, number=node.number, title=node.title)
 
     def add_label(self, issue_node_id: str, label_node_id: str) -> None:
-        self._graphql.run(
-            _ADD_LABEL_MUTATION,
-            labelableId=issue_node_id,
-            labelId=label_node_id,
-        )
+        self._issues.add_label(issue_node_id, label_node_id)
 
 
 def github_client(target: Repo | None = None) -> GitHubClient:

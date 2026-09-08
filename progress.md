@@ -715,3 +715,49 @@ real VM boot or live GitHub. `Runtime.drive` builds the client on the event
 loop (one `git remote get-url`). Orbit's `plan` uses `batch plan` defaults
 (no model/ram). `#36`'s open-issue-from-run-row stories are follow-ups on
 `DashboardScreen`.
+
+## 2026-09-08 — issue #42 share issue label/body mutations through ghgql
+
+https://github.com/ginabythebay/orbatch/issues/42
+
+Decisions:
+- `packages/ghgql/src/ghgql/issues.py`: `IssueMutations(graphql, repo)` +
+  `LabelNode`/`LabelConnection`/`IssueCore`. `ghgql` gains a `pydantic` dep.
+  Both clients hold one `IssueMutations` and delegate; public signatures
+  unchanged, so `batch/state.py`, orbit's orchestrators and every
+  `patch.object` call site are untouched.
+- `label_ids(names)` builds one aliased query (`l0..lN`, positional because
+  `ready-for-review` is not a valid GraphQL alias), reports every missing
+  name in one `RuntimeError` ("Labels not found in repo: a, b"), and returns
+  `{}` for no names without a query (an empty selection set is invalid GraphQL).
+- `label_id(name, group=())` fills a per-instance cache. Ordering is
+  **group first, then name** (`dict.fromkeys((*group, name))`) — with name
+  first, `payloads.label_ids()`'s positional aliases would shift with whichever
+  label was asked for. Batch passes `tuple(BatchLabel)`, keeping its one round
+  trip; orbit's `fetch_label_id` passes no group and thereby gains the cache
+  and batch's wording (nothing pinned the old `Label 'x' not found`).
+- `_ChildNode(IssueCore)` in batch, `_IssueDetailRaw(IssueCore)` in orbit;
+  orbit's `_LabelName`/`_LabelNodes` and its duplicate `_LabelNode`/
+  `_LabelConnection` fold into the shared pair.
+- `payloads.label_ids()` now emits `l0..l4` in `BatchLabel` order and ids
+  `LA_<label name>`. Two pinned id literals changed (`LA_readyForReview` ->
+  `LA_ready-for-review`) in state_test and recovery_test; no fixture call
+  site changed.
+
+Files: packages/ghgql/{pyproject.toml,src/ghgql/issues.py (new),
+tests/issues_test.py (new)}, tools/batch/src/batch/{github/client.py,
+testing/payloads.py}, tools/batch/tests/{client,state,recovery}_test.py,
+tools/orbit/src/orbit/github/client.py, tools/orbit/tests/client_test.py,
+README.md, CLAUDE.md, uv.lock.
+
+Review: two findings. Fixed: the generated label query text was asserted
+nowhere (only variables), so a broken interpolation stayed green — the test
+now pins `$lN: String!` and `lN: label(name: $lN)`. Partly declined: the
+reviewer would delete `TestIssueCore` as a diff mirror; kept (test-plan item
+6, and the only direct exercise of the alias-carrying extension) but its
+fixture's `closed_by` no longer masquerades as a `LabelConnection`.
+
+Notes for next iteration: `#32`, `#34` remain open. `IssueMutations` owns
+the label cache, so a client instance never sees a label renamed mid-run.
+`fetch_targets`, orbit's milestone/period/sub-issue queries stay in their own
+clients on purpose — the audit in `#42` found no other overlap.
