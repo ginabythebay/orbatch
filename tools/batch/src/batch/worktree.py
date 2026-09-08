@@ -23,7 +23,6 @@ from batch.stack import StackManager
 from batch.vm import relative_worktree
 
 PROG_NAME = "vwt"
-DEFAULT_MODEL = "opus"
 START_POINT = "HEAD"
 CONFIRM = (
     "Press Enter to remove the worktree, branch, and VM disk (Ctrl-C to keep them) "
@@ -183,7 +182,11 @@ def _refuse_impossible_options(
 @click.argument("branch")
 @click.argument("issue", type=int, required=False)
 @click.argument("guidance", required=False)
-@click.option("--model", default=DEFAULT_MODEL, help="Model for the claude session.")
+@click.option(
+    "--model",
+    default=None,
+    help="Model for every step of this session, overriding `[models]`.",
+)
 @click.option("--base", default=None, help="Branch the PR is based on.")
 @click.option(
     "-n",
@@ -201,7 +204,7 @@ def cli(
     branch: str,
     issue: int | None,
     guidance: str | None,
-    model: str,
+    model: str | None,
     base: str | None,
     max_tests: int | None,
     plan_guidance: str | None,

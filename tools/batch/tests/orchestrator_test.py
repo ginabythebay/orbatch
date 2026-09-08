@@ -269,7 +269,9 @@ class TestPromptAssembly:
         h = harness(
             batch_issue(10, body=PLAN_BODY),
             root=tmp_path,
-            models=Models(default="opus", plan="fable", review="haiku"),
+            models=Models(
+                default="sonnet", implement="opus", plan="fable", review="haiku"
+            ),
         )
 
         _ = h.core.run((EPIC,))

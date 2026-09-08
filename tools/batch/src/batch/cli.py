@@ -406,7 +406,11 @@ def _agent_options(f: FC) -> FC:
                 "--guidance", default=None, help="Test guidance for the agent."
             ),
             click.option("--base", default=None, help="Branch the PR is based on."),
-            click.option("--model", default=None, help="Model for the claude session."),
+            click.option(
+                "--model",
+                default=None,
+                help="Model for every step of this session, overriding `[models]`.",
+            ),
             click.option("--ram", type=int, default=DEFAULT_RAM, help="VM RAM in MB."),
             click.option(
                 "--dry-run", is_flag=True, help="Print the command instead of running."
@@ -688,7 +692,11 @@ def _resolve_orchestrator(
 
 @cli.command()
 @_targets_arg
-@click.option("--model", default=None, help="Model for the implementation agents.")
+@click.option(
+    "--model",
+    default=None,
+    help="Model for every step of this run, overriding `[models]`.",
+)
 @click.option(
     "--timeout",
     type=float,

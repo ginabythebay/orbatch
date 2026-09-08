@@ -125,7 +125,7 @@ class TestRework:
         rework, _, _, runner = verbs(
             tmp_path,
             batch_issue(10, BatchLabel.READY_FOR_REVIEW),
-            models=Models(default="opus", review="fable"),
+            models=Models(default="sonnet", implement="opus", review="fable"),
         )
 
         _ = rework.rework(10)
@@ -133,7 +133,7 @@ class TestRework:
         assert runner.agents() == [
             (
                 "tools/drive 10 --rework --base main"
-                " --model opus --plan-model opus --review-model fable"
+                " --model opus --plan-model sonnet --review-model fable"
             )
         ]
 

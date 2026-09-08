@@ -781,7 +781,8 @@ class TestVm:
         _ = config_at(
             monkeypatch,
             tmp_path / "repo",
-            TEST_CONFIG_TOML + '[models]\ndefault = "opus"\nreview = "fable"\n',
+            TEST_CONFIG_TOML
+            + '[models]\ndefault = "opus"\nimplement = "sonnet"\nreview = "fable"\n',
         )
 
         def console(*extra: str) -> Result:
@@ -807,10 +808,12 @@ class TestVm:
 
         assert (worked.exit_code, bare.exit_code) == (0, 0)
         assert (
-            "tools/drive 1499 --model opus --plan-model opus --review-model fable"
+            "tools/drive 1499 --model sonnet --plan-model opus --review-model fable"
             in worked.output
         )
         assert "claude --model opus " in bare.output
+        assert "--plan-model" not in bare.output
+        assert "--review-model" not in bare.output
 
     def test_a_relative_worktree_still_claims_the_bare_branch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
