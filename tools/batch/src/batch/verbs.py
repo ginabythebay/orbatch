@@ -8,7 +8,6 @@ from batch.config import BatchConfig
 from batch.models import (
     Batch,
     BatchIssue,
-    BatchLabel,
     RecoveryAction,
     RecoveryRefusal,
     RecoveryResult,
@@ -18,6 +17,7 @@ from batch.models import (
 )
 from batch.order import UNSTARTED, base_under
 from batch.vm import agent_command, session_for
+from ghgql.labels import BatchLabel
 
 REWORKABLE = frozenset({BatchLabel.READY_FOR_REVIEW, BatchLabel.STUCK})
 

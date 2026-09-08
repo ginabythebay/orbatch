@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import pytest
@@ -5,13 +6,14 @@ import pytest
 from batch.agent import PlanningAgent
 from batch.github.client import TARGETS_PER_QUERY
 from batch.models import (
-    BatchLabel,
+    ChildIssue,
     ConflictingLabelsError,
     NotAChildError,
     NoTargetsError,
 )
 from batch.order import MAIN, base_for, base_under
 from batch.polling import SettledTargets
+from batch.state import _batch_labels
 from batch.testing.payloads import (
     EPIC,
     body_writes,
@@ -32,6 +34,7 @@ from batch.testing.payloads import (
 )
 from ghgql.errors import IssueNotFoundError
 from ghgql.fake import Errors, Response
+from ghgql.labels import BatchLabel
 
 
 class TestBatch:
@@ -79,6 +82,19 @@ class TestBatch:
         assert exc_info.value.number == 7
         assert "implementing" in str(exc_info.value)
         assert "stuck" in str(exc_info.value)
+
+    def test_state_reads_the_shared_batch_label_vocabulary(self) -> None:
+        issue = ChildIssue(
+            node_id="I_7",
+            number=7,
+            state="OPEN",
+            title="Issue 7",
+            body="",
+            labels=("soon", "implementing", "epic", "stuck"),
+            closed_by_merge=False,
+        )
+
+        assert _batch_labels(issue) == [BatchLabel.IMPLEMENTING, BatchLabel.STUCK]
 
     def test_non_batch_labels_are_ignored(self) -> None:
         response = children(

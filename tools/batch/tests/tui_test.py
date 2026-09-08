@@ -13,7 +13,6 @@ from textual.pilot import Pilot
 
 from batch.models import (
     Batch,
-    BatchLabel,
     DashboardRow,
     DebugEntry,
     DebugRefusal,
@@ -26,6 +25,7 @@ from batch.models import (
 )
 from batch.text_output import debug_line
 from batch.tui.app import DashboardApp, Driving
+from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
 
 pytestmark = pytest.mark.slow

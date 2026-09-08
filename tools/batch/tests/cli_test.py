@@ -28,7 +28,6 @@ from batch.models import (
     AccountCheckError,
     Alignment,
     BatchIssue,
-    BatchLabel,
     DebugEntry,
     DebugRefusal,
     EmptyTokenError,
@@ -88,6 +87,7 @@ from batch.testing.scratch import Scratch, scratch
 from batch.text_output import debug_line
 from batch.verbs import Verbs
 from batch.vm import DEFAULT_RUN_ROOT, PS, GuestAccount, VmRunner
+from ghgql.labels import BatchLabel
 
 
 @contextmanager

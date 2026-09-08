@@ -119,7 +119,7 @@ query($milestone: String!, $owner: String!, $name: String!, $labels: [String!], 
             parent {
               number
             }
-            labels(first: 20) {
+            labels(first: 100) {
               nodes {
                 name
               }
@@ -142,6 +142,7 @@ query($owner: String!, $name: String!, $number: Int!) {
           number
           state
           title
+          labels(first: 100) { nodes { name } }
           subIssues(first: 100) {
             totalCount
           }
@@ -197,6 +198,7 @@ query($milestone: String!, $owner: String!, $name: String!, $after: String) {
             number
             state
             title
+            labels(first: 100) { nodes { name } }
             subIssues(first: 100) {
               totalCount
               nodes {
@@ -219,6 +221,7 @@ query($q: String!) {
         number
         state
         title
+        labels(first: 100) { nodes { name } }
       }
     }
   }
@@ -243,6 +246,18 @@ query($owner: String!, $name: String!, $number: Int!) {
 """
 
 
+class _LabelName(BaseModel):
+    name: str
+
+
+class _LabelNodes(BaseModel):
+    nodes: list[_LabelName]
+
+
+def _label_names(labels: _LabelNodes | None) -> tuple[str, ...]:
+    return () if labels is None else tuple(label.name for label in labels.nodes)
+
+
 class _SubIssueState(BaseModel):
     state: str
 
@@ -258,6 +273,7 @@ class _EpicIssue(BaseModel):
     number: int
     state: str
     title: str
+    labels: _LabelNodes | None = None
     sub_issues: _SubIssueNodes = Field(alias="subIssues")
 
 
@@ -299,6 +315,7 @@ class _SubIssueChild(BaseModel):
     number: int
     state: str
     title: str
+    labels: _LabelNodes | None = None
     sub_issues: _SubCount = Field(alias="subIssues")
 
 
@@ -446,14 +463,6 @@ query($q: String!, $after: String) {
 """
 
 
-class _LabelName(BaseModel):
-    name: str
-
-
-class _LabelNodes(BaseModel):
-    nodes: list[_LabelName]
-
-
 class _ParentNumberNode(BaseModel):
     number: int
 
@@ -525,6 +534,7 @@ class _SearchNode(BaseModel):
     number: int | None = None
     state: str | None = None
     title: str | None = None
+    labels: _LabelNodes | None = None
 
 
 class _SearchConnection(BaseModel):
@@ -675,13 +685,14 @@ class _CreateIssueData(BaseModel):
 
 
 def _milestone_issue(node: _MilestoneIssueNode) -> MilestoneIssue:
-    labels = node.labels.nodes if node.labels is not None else []
+    labels = _label_names(node.labels)
     return MilestoneIssue(
         number=node.number,
         state=node.state,
         title=node.title,
+        labels=labels,
         parent_number=node.parent.number if node.parent is not None else None,
-        is_epic=any(label.name == "epic" for label in labels),
+        is_epic="epic" in labels,
     )
 
 
@@ -794,7 +805,14 @@ class GitHubClient:
         for node in response.search.nodes:
             if node.number is None or node.state is None or node.title is None:
                 continue
-            issues.append(Issue(number=node.number, state=node.state, title=node.title))
+            issues.append(
+                Issue(
+                    number=node.number,
+                    state=node.state,
+                    title=node.title,
+                    labels=_label_names(node.labels),
+                )
+            )
         return issues
 
     def search_period_issues(self, start: date, end: date) -> list[PeriodIssue]:
@@ -884,6 +902,7 @@ class GitHubClient:
                     number=node.number,
                     state=node.state,
                     title=node.title,
+                    labels=_label_names(node.labels),
                     children=children,
                 )
             )
@@ -924,6 +943,7 @@ class GitHubClient:
                     number=issue.number,
                     state=issue.state,
                     title=issue.title,
+                    labels=_label_names(issue.labels),
                     open_count=open_count,
                     total_count=sub.total_count,
                 )

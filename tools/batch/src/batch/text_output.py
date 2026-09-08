@@ -10,7 +10,6 @@ from rich.text import Text
 
 from batch.models import (
     Batch,
-    BatchLabel,
     CiStatus,
     DashboardRow,
     DebugEntry,
@@ -31,6 +30,7 @@ from batch.models import (
     Verdict,
     VmFacts,
 )
+from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
 
 _STATE_STYLES = {

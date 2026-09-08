@@ -6,15 +6,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
-
-
-class BatchLabel(StrEnum):
-    QUEUED = "queued"
-    PLANNED = "planned"
-    IMPLEMENTING = "implementing"
-    READY_FOR_REVIEW = "ready-for-review"
-    STUCK = "stuck"
 
 
 class ConflictingLabelsError(RuntimeError):

@@ -519,3 +519,52 @@ you run through Bash that merely NAMES basedpyright is denied now, including
 portability guard sweeps untracked files too, so never let the extraction
 repo's name back into `.claude/` — that is why the guidance file names no
 source for what it was adapted from.
+
+## 2026-09-07 — issue #39 shared BatchLabel + orbit glyph column
+
+https://github.com/ginabythebay/orbatch/issues/39
+
+Decisions:
+- `packages/ghgql/src/ghgql/labels.py` holds `BatchLabel`, `batch_labels`,
+  `glyph`, and the two sentinels `NO_LABEL = " "` / `CONFLICT = "!"`. Full
+  move out of `batch.models`, no re-export shim — every batch import now
+  reads `from ghgql.labels import BatchLabel`. `ConflictingLabelsError`
+  stayed in `batch.models`; `state._batch_labels` is a one-line delegation.
+- `Palette` moved to `orbit/palette.py` and gained `WARNING`, plus
+  `glyph_span(labels) -> (mark, style)`. Both renderers call it, so the
+  CLI/TUI agreement of test-plan item 14 is structural, not just asserted.
+- Glyph is its own cell: `issue_text` appends `mark` then `" #{number}"`;
+  `text_output` adds a `width=1` first column to the issue, epic and
+  sub-issue tables. `filtered_text` / FilteredRun rows emit the blank one
+  so runs stay aligned.
+- Queries widened as the issue's planning note says: `_LIST_EPICS_QUERY`,
+  `_SUB_ISSUES_QUERY`, `_SEARCH_ISSUES_QUERY`. All four orbit label fetches
+  now ask for `first: 100`, matching batch (round 2 finding).
+- `tui_test._label` strips the blank glyph column so the existing structural
+  assertions stay readable; `TestBatchGlyphsReachEverySurface` uses its own
+  labelled fixtures rather than mutating the shared ones (which ~20 tests
+  assert on verbatim).
+- Help legend gained a `batch state` section built from `BatchLabel` +
+  `glyph_span`, so the letters and the WARNING styling are documented in
+  app and cannot drift.
+
+Files: packages/ghgql/src/ghgql/labels.py + tests/labels_test.py (new),
+tools/orbit/src/orbit/{palette.py (new),text_output.py,tree.py,
+github/{client,models}.py,tui/{widgets,screens}.py}, orbit tests
+{widgets_test.py (new),client,text_output,tree,tui,cli}_test.py,
+tools/batch/** (import move only, plus state.py delegation),
+README.md, CLAUDE.md.
+
+Review: two rounds, eleven findings, all fixed. Round 1 found a real bug —
+the move-to-epic picker was the one `issue_text` call site left unlabelled —
+plus four untested wirings, the undocumented legend, and a docstring that
+restated its signature. Round 2 found that the three widened queries were
+pinned only by fake payloads (FakeTransport ignores the query text), the
+20-vs-100 label page size disagreement with batch, and that round 1's
+`patch.object` delegation test mirrored the diff; replaced with a semantic
+assertion on a mixed tuple.
+
+Notes for next iteration: `#32` and `#34` remain the open follow-ups.
+`print_parent_issue` (`orbit parent`) is the one listing with no glyph
+column — single row, nothing to align against. A batch label past the
+100th on an issue still renders blank.

@@ -21,6 +21,7 @@ from textual.worker import WorkerError
 
 from ghgql.errors import IssueNotFoundError
 from ghgql.fake import FakeTransport
+from ghgql.labels import CONFLICT, BatchLabel, glyph
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL
 from orbit.config import CommandMode, CustomCommand, Milestones, ProjectConfig
@@ -304,8 +305,17 @@ def _status_text(app: OrbitApp) -> str:
     return str(bar.query_one("#status-message", Static).content)
 
 
+def _label(node: TreeNode[TreeItemData]) -> str:
+    """A node's rendered label, minus the blank batch-glyph column.
+
+    Stripping it keeps these assertions about tree structure;
+    `widgets_test` covers the glyph itself.
+    """
+    return str(node.label).removeprefix("  ")
+
+
 def _root_labels(tree: IssueTree) -> list[str]:
-    return [str(node.label) for node in tree.root.children]
+    return [_label(node) for node in tree.root.children]
 
 
 def _visible_labels(tree: IssueTree) -> list[str]:
@@ -314,7 +324,7 @@ def _visible_labels(tree: IssueTree) -> list[str]:
 
     def below(node: TreeNode[TreeItemData]) -> Iterator[str]:
         for child in node.children:
-            yield str(child.label)
+            yield _label(child)
             if child.is_expanded:
                 yield from below(child)
 
@@ -767,7 +777,7 @@ class TestHideClosed:
                 mock_subs.assert_called_once_with(860)
                 node = app.query_one(IssueTree).root.children[2]
                 assert node.is_expanded
-                assert [str(child.label) for child in node.children] == [
+                assert [_label(child) for child in node.children] == [
                     "#910 leaf a",
                     "1/1 <1 issue filtered>",
                 ]
@@ -783,7 +793,7 @@ class TestHideClosed:
                 await pilot.press("down", "right")
                 await _settle(pilot)
                 node = app.query_one(IssueTree).root.children[1]
-                assert [str(child.label) for child in node.children] == [
+                assert [_label(child) for child in node.children] == [
                     "#852 0/4 Test speed",
                     "#853 0/2 Old deploys",
                 ]
@@ -889,8 +899,8 @@ class TestHideClosed:
                 await pilot.press("right", "down", "down", "right")
                 await _settle(pilot)
                 run = app.query_one(IssueTree).root.children[0].children[1]
-                assert str(run.label) == "<2 issues filtered>"
-                assert [str(child.label) for child in run.children] == [
+                assert _label(run) == "<2 issues filtered>"
+                assert [_label(child) for child in run.children] == [
                     "#913 dead a",
                     "#914 0/1 dead parent",
                 ]
@@ -962,7 +972,7 @@ class TestHideClosed:
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
                 run = tree.root.children[0].children[1]
-                assert str(run.label) == "<2 issues filtered>"
+                assert _label(run) == "<2 issues filtered>"
                 assert not run.is_expanded
                 labels = _visible_labels(tree)
                 assert not any("#913" in label or "#914" in label for label in labels)
@@ -1204,12 +1214,34 @@ class TestStandaloneSection:
                 tree = _the_app(pilot).query_one(IssueTree)
                 labels = _root_labels(tree)
                 assert labels[-1] == "STANDALONE"
-                assert [
-                    str(child.label) for child in tree.root.children[-1].children
-                ] == [
+                assert [_label(child) for child in tree.root.children[-1].children] == [
                     "#30 solo a",
                     "#31 solo b",
                     "#32 solo c",
+                ]
+
+    @pytest.mark.asyncio
+    async def test_a_batch_label_reaches_the_rendered_row(self) -> None:
+        queued = [
+            MilestoneIssue(
+                number=30,
+                state="OPEN",
+                title="solo a",
+                parent_number=None,
+                is_epic=False,
+                labels=("queued",),
+            )
+        ]
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=queued),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                section = tree.root.children[-1]
+                assert [str(child.label) for child in section.children] == [
+                    "q #30 solo a"
                 ]
 
     @pytest.mark.asyncio
@@ -1254,7 +1286,7 @@ class TestStandaloneSection:
                 await pilot.press("f")
                 await _settle(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
-                assert [str(child.label) for child in section.children] == [
+                assert [_label(child) for child in section.children] == [
                     "#30 solo a",
                     "<1 issue filtered>",
                     "#32 solo c",
@@ -1275,7 +1307,7 @@ class TestStandaloneSection:
                 await _settle(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
                 assert str(section.label) == "STANDALONE"
-                assert [str(child.label) for child in section.children] == [
+                assert [_label(child) for child in section.children] == [
                     "<1 issue filtered>"
                 ]
 
@@ -1290,7 +1322,7 @@ class TestStandaloneSection:
                 await pilot.press("f")
                 await _settle(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
-                assert [str(child.label) for child in section.children] == [
+                assert [_label(child) for child in section.children] == [
                     "#30 solo a",
                     "#31 solo b",
                     "#32 solo c",
@@ -1318,7 +1350,7 @@ class TestStandaloneSection:
                 placeholder = section.children[1]
                 assert section.is_expanded
                 assert placeholder.is_expanded
-                assert [str(child.label) for child in placeholder.children] == [
+                assert [_label(child) for child in placeholder.children] == [
                     "#31 solo b"
                 ]
                 mock_subs.assert_not_called()
@@ -1423,6 +1455,32 @@ class TestHelpModal:
                 panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
                 assert "n  Toggle 'soon' filter (backlog)" in panel
                 assert "f  Toggle hide-closed" in panel
+
+    @pytest.mark.asyncio
+    async def test_the_color_legend_keeps_the_blank_glyph_column(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                samples = [
+                    line for line in panel.split("\n") if line.lstrip().startswith("#")
+                ]
+                assert len(samples) == 3
+                assert all(line.index("#") == 2 for line in samples)
+
+    @pytest.mark.asyncio
+    async def test_the_legend_names_every_glyph(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                for label in BatchLabel:
+                    assert f"{glyph((label,))}  {label.value}" in panel
+                assert f"{CONFLICT}  more than one batch label" in panel
 
     @pytest.mark.asyncio
     async def test_main_screen_actions_blocked_while_modal_open(self) -> None:
@@ -2636,3 +2694,114 @@ class TestGotoStandalone:
                 assert tree.selected_issue_number == 30
                 assert tree.hide_closed
                 assert "Jumped to #30" in _status_text(app)
+
+
+_GLYPH_EPICS = [
+    Epic(
+        number=905,
+        state="OPEN",
+        title="orbit dev tool",
+        open_count=1,
+        total_count=1,
+        labels=("stuck",),
+    )
+]
+
+_GLYPH_SUBS = [
+    SubIssueData(
+        number=910, state="OPEN", title="leaf a", children=(), labels=("queued",)
+    ),
+    SubIssueData(
+        number=911,
+        state="OPEN",
+        title="nested epic",
+        labels=("planned",),
+        children=(
+            SubIssueData(
+                number=912,
+                state="OPEN",
+                title="deep",
+                children=(),
+                labels=("implementing",),
+            ),
+        ),
+    ),
+]
+
+_GLYPH_FLAT = [
+    MilestoneIssue(
+        number=20,
+        state="OPEN",
+        title="flat a",
+        parent_number=905,
+        is_epic=False,
+        labels=("ready-for-review",),
+    )
+]
+
+
+@contextmanager
+def _glyph_github() -> Generator[GitHubClient]:
+    with (
+        _patched_github() as client,
+        patch.object(client, "list_epics_by_milestone", return_value=_GLYPH_EPICS),
+        patch.object(client, "fetch_sub_issue_tree", return_value=_GLYPH_SUBS),
+        patch.object(client, "list_issues_by_milestone", return_value=_GLYPH_FLAT),
+    ):
+        yield client
+
+
+class TestBatchGlyphsReachEverySurface:
+    @pytest.mark.asyncio
+    async def test_epic_rows_and_every_sub_issue_depth_carry_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                tree = app.query_one(IssueTree)
+                epic = tree.root.children[0]
+                nested = epic.children[1]
+                nested.expand()
+                await _settle(pilot)
+                assert str(epic.label).startswith("s ")
+                assert [str(c.label)[0] for c in epic.children] == ["q", "p"]
+                assert str(nested.children[0].label).startswith("i ")
+
+    @pytest.mark.asyncio
+    async def test_hide_closed_children_keep_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                epic = app.query_one(IssueTree).root.children[0]
+                assert [str(c.label)[0] for c in epic.children] == ["q", "p"]
+
+    @pytest.mark.asyncio
+    async def test_the_flat_list_rows_carry_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                option = app.query_one("#sprint-list", IssueList).get_option_at_index(0)
+                assert str(option.prompt).startswith("r #20")
+
+    @pytest.mark.asyncio
+    async def test_the_epic_picker_carries_the_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("m")
+                await _settle(pilot)
+                screen = app.screen
+                assert isinstance(screen, EpicPickerScreen)
+                option = screen.query_one(OptionList).get_option_at_index(0)
+                assert str(option.prompt).startswith("s #905")

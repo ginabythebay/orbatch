@@ -7,13 +7,13 @@ from batch.body import has_test_plan
 from batch.models import (
     Batch,
     BatchIssue,
-    BatchLabel,
     DroppedChild,
     NextIssue,
     PlanRefusal,
     PlanWritten,
 )
 from batch.order import predecessors
+from ghgql.labels import BatchLabel
 
 _CLAIMABLE = frozenset({BatchLabel.QUEUED, BatchLabel.PLANNED})
 

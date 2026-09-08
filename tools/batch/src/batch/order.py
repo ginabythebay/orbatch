@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from batch.models import Batch, BatchIssue, BatchLabel
+from batch.models import Batch, BatchIssue
+from ghgql.labels import BatchLabel
 
 MAIN = "main"
 ORIGIN_MAIN = f"origin/{MAIN}"

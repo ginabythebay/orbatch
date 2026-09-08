@@ -15,7 +15,6 @@ from batch.models import (
     AlreadyRunningError,
     Batch,
     BatchIssue,
-    BatchLabel,
     CiStatus,
     DroppedChild,
     LabelState,
@@ -34,6 +33,7 @@ from batch.state import BatchState
 from batch.verify import Verifier
 from batch.vm import GuestAccount, VmRunner
 from ghgql.fake import FakeTransport, Response
+from ghgql.labels import BatchLabel
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL
 

@@ -6,7 +6,7 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from batch.models import BatchIssue, BatchLabel, RecoveryRefusal
+from batch.models import BatchIssue, RecoveryRefusal
 from batch.recovery import Recovery
 from batch.testing.payloads import (
     EPIC,
@@ -19,6 +19,7 @@ from batch.testing.payloads import (
 )
 from batch.verbs import Verbs
 from batch.vm import VmRunner
+from ghgql.labels import BatchLabel
 
 
 def verbs(

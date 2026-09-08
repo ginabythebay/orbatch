@@ -5,9 +5,20 @@ from typing import TextIO
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
+from ghgql.labels import NO_LABEL
 from orbit.github.models import Epic, Issue, IssueDetail
+from orbit.palette import glyph_span
 from orbit.tree import FilteredRun, TreeItem
+
+
+def _add_glyph_column(table: Table) -> None:
+    table.add_column(no_wrap=True, width=1)
+
+
+def _glyph_cell(labels: Sequence[str]) -> Text:
+    return Text(*glyph_span(labels))
 
 
 def filtered_run_label(count: int) -> str:
@@ -20,14 +31,17 @@ def print_issue_table(issues: Sequence[Issue | FilteredRun], out: TextIO) -> Non
         out.write("No issues found.\n")
         return
     table = Table(show_header=False, box=None, pad_edge=False)
+    _add_glyph_column(table)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(no_wrap=True)
     table.add_column()
     for issue in issues:
         if isinstance(issue, FilteredRun):
-            table.add_row("", "", filtered_run_label(issue.count))
+            table.add_row(NO_LABEL, "", "", filtered_run_label(issue.count))
         else:
-            table.add_row(f"#{issue.number}", issue.state, issue.title)
+            table.add_row(
+                _glyph_cell(issue.labels), f"#{issue.number}", issue.state, issue.title
+            )
     console = Console(file=out, highlight=False)
     console.print(table)
 
@@ -44,15 +58,17 @@ def print_epic_table(epics: Sequence[Epic | FilteredRun], out: TextIO) -> None:
         out.write("No epics found.\n")
         return
     table = Table(show_header=False, box=None, pad_edge=False)
+    _add_glyph_column(table)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(no_wrap=True)
     table.add_column(no_wrap=True)
     table.add_column()
     for epic in epics:
         if isinstance(epic, FilteredRun):
-            table.add_row("", "", "", filtered_run_label(epic.count))
+            table.add_row(NO_LABEL, "", "", "", filtered_run_label(epic.count))
             continue
         table.add_row(
+            _glyph_cell(epic.labels),
             f"#{epic.number}",
             epic.state,
             f"{epic.open_count}/{epic.total_count}",
@@ -67,6 +83,7 @@ def print_sub_issue_tree(nodes: Sequence[TreeItem], out: TextIO) -> None:
         out.write("No sub-issues found.\n")
         return
     table = Table(show_header=False, box=None, pad_edge=False)
+    _add_glyph_column(table)
     table.add_column(style="cyan", no_wrap=True)
     table.add_column(no_wrap=True)
     table.add_column(no_wrap=True)
@@ -89,9 +106,12 @@ def _add_tree_rows(
             else ""
         )
         if isinstance(node, FilteredRun):
-            table.add_row("", "", count, f"{indent}{filtered_run_label(node.count)}")
+            table.add_row(
+                NO_LABEL, "", "", count, f"{indent}{filtered_run_label(node.count)}"
+            )
         else:
             table.add_row(
+                _glyph_cell(node.labels),
                 f"{indent}#{node.number}",
                 node.state,
                 count,
