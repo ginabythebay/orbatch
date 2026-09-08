@@ -14,15 +14,23 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from enum import Enum, auto
+from subprocess import CalledProcessError
 from typing import ClassVar, final, override
 
+import click
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.widgets import OptionList, Tree
 from textual.widgets.tree import TreeNode
 
+from batch.awake import awake
+from batch.lock import BatchInProgressError, run_lock
+from batch.models import RunResult
+from batch.text_output import VerbLines, approve_lines, queue_lines, targets_line
+from batch.tui.screen import DashboardScreen
 from ghgql.errors import IssueNotFoundError
+from orbit.batching import Batching, BatchVerb, load_batching
 from orbit.config import CommandMode, CustomCommand, Milestones, ProjectConfig
 from orbit.core import open_url, run_attached, spawn
 from orbit.filtering import partition_standalone
@@ -35,7 +43,9 @@ from orbit.github.models import (
     Surface,
 )
 from orbit.github.orchestrators import close_issue, move_issue, schedule_issue
+from orbit.marks import Marks
 from orbit.tui.screens import (
+    BatchVerbScreen,
     BranchPromptScreen,
     DetailScreen,
     EpicPickerScreen,
@@ -70,8 +80,24 @@ _MAIN_SCREEN_ACTIONS = frozenset(
         "edit",
         "custom_command",
         "goto_issue",
+        "mark_toggle",
+        "unmark",
+        "unmark_all",
+        "batch_menu",
+        "show_run",
     }
 )
+
+# The only main-screen actions that fire over the batch run screen: each
+# pops it first, so the view it lands on is the one the key names.
+_RUN_SCREEN_ACTIONS = frozenset({"show_epics", "show_sprint", "show_backlog"})
+
+RUN_SCREEN = "batch-run"
+# A verb reaches GitHub, the filesystem and git (`StackManager` runs it with
+# check=True); each failure must end on the status bar, never in a panic.
+_VERB_FAILURES = (RuntimeError, OSError, CalledProcessError)
+NOT_CONFIGURED = "This repo is not configured for batch"
+IN_FLIGHT = "Any VM still in flight is left running."
 
 # Issue-targeted actions allowed from the detail screen; each dismisses it
 # before acting on the issue it displays. View switches, refresh, and the
@@ -112,6 +138,11 @@ class OrbitApp(App[None]):
         Binding("x", "close_issue", "Close"),
         Binding("t", "edit", "Edit in browser"),
         Binding("g", "goto_issue", "Go to issue"),
+        Binding("space", "mark_toggle", "Mark", show=False),
+        Binding("u", "unmark", "Unmark", show=False),
+        Binding("U", "unmark_all", "Unmark all", show=False),
+        Binding("exclamation_mark", "batch_menu", "Batch", key_display="!"),
+        Binding("d", "show_run", "Run screen", show=False),
         Binding("question_mark", "help", "Help", key_display="?"),
         # Both only fire on the main screen: every other screen inherits
         # ClosableScreen, whose q/escape close it and shadow these. Both
@@ -125,35 +156,44 @@ class OrbitApp(App[None]):
         """Keys a project's `.orbit.toml` may not claim.
 
         Derived from BINDINGS rather than listed by hand so it cannot
-        drift as bindings change.
+        drift as bindings change. A key shown under another name (`!`
+        for `exclamation_mark`) is reserved under both.
         """
-        return frozenset(
-            binding.key for binding in cls.BINDINGS if isinstance(binding, Binding)
-        )
+        bindings = [binding for binding in cls.BINDINGS if isinstance(binding, Binding)]
+        shown = {binding.key_display for binding in bindings if binding.key_display}
+        return frozenset({binding.key for binding in bindings} | shown)
 
     def __init__(
         self,
         client: GitHubClient,
         milestones: Milestones,
         commands: Sequence[CustomCommand] = (),
+        batching: Batching | None = None,
     ) -> None:
         super().__init__()
         self._client = client
         self._milestones = milestones
+        self._batching = batching
+        self._run_screen: DashboardScreen | None = None
         # Bound by index: the action string is built here, and an index
         # sidesteps quoting a key that might itself be a quote character.
         self._commands = tuple(commands)
         for index, command in enumerate(self._commands):
             self._bindings.bind(command.key, f"custom_command({index})", command.label)
+        self._marks = Marks()
         self._hide_closed = True
-        self._tree = IssueTree(id="epic-tree", hide_closed=self._hide_closed)
+        self._tree = IssueTree(
+            self._marks, id="epic-tree", hide_closed=self._hide_closed
+        )
         self._sprint_list = IssueList(
+            self._marks,
             id="sprint-list",
             milestone=milestones.current,
             item_name="sprint issues",
             hide_closed=self._hide_closed,
         )
         self._backlog_list = IssueList(
+            self._marks,
             id="backlog-list",
             milestone=milestones.backlog,
             item_name="backlog issues",
@@ -181,10 +221,23 @@ class OrbitApp(App[None]):
     @override
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action in _MAIN_SCREEN_ACTIONS and len(self.screen_stack) > 1:
+            if self._run_screen_shown():
+                return action in _RUN_SCREEN_ACTIONS
             return (
                 action in _DETAIL_SCREEN_ACTIONS and self._detail_screen() is not None
             )
         return True
+
+    @property
+    def run_live(self) -> bool:
+        return self._run_screen is not None and self._run_screen.live
+
+    def _run_screen_shown(self) -> bool:
+        return self._run_screen is not None and self.screen is self._run_screen
+
+    def _leave_run_screen(self) -> None:
+        if self._run_screen_shown():
+            _ = self.pop_screen()
 
     def _detail_screen(self) -> DetailScreen | None:
         """The detail screen if it's the active (top) screen, else None."""
@@ -354,14 +407,17 @@ class OrbitApp(App[None]):
     # --- Actions ---
 
     def action_show_epics(self) -> None:
+        self._leave_run_screen()
         self._show_view(_View.EPICS)
         self._load_epics()
 
     def action_show_sprint(self) -> None:
+        self._leave_run_screen()
         self._show_view(_View.SPRINT)
         self._load_issue_list(self._sprint_list)
 
     def action_show_backlog(self) -> None:
+        self._leave_run_screen()
         self._show_view(_View.BACKLOG)
         self._load_issue_list(self._backlog_list)
 
@@ -447,6 +503,39 @@ class OrbitApp(App[None]):
                 self._launch(command, issue_number, branch)
 
         self.push_screen(BranchPromptScreen(command.label), _on_branch)
+
+    def action_mark_toggle(self) -> None:
+        widget = self._view_widgets[self._view]
+        number = widget.selected_issue_number
+        if number is not None:
+            self._marks.toggle(number)
+            self._mark_changed(number)
+        widget.advance()
+
+    def action_unmark(self) -> None:
+        number = self._view_widgets[self._view].selected_issue_number
+        if number is not None:
+            self._marks.unmark(number)
+            self._mark_changed(number)
+
+    def action_unmark_all(self) -> None:
+        self._clear_marks()
+
+    def _clear_marks(self) -> None:
+        self._marks.clear()
+        for widget in self._view_widgets.values():
+            widget.refresh_marks()
+        self._show_mark_count()
+
+    def _mark_changed(self, number: int) -> None:
+        """Every view re-renders, not just the visible one: `g` can
+        show the tree again without reloading it."""
+        for widget in self._view_widgets.values():
+            widget.refresh_mark(number)
+        self._show_mark_count()
+
+    def _show_mark_count(self) -> None:
+        self.query_one(StatusBar).set_mark_count(self._marks.count)
 
     def action_goto_issue(self) -> None:
         def _on_number(number: int | None) -> None:
@@ -534,6 +623,113 @@ class OrbitApp(App[None]):
                 return parent.number
             current = parent.number
 
+    # --- Batch ---
+
+    def action_batch_menu(self) -> None:
+        self.push_screen(BatchVerbScreen(), self._on_verb)
+
+    def _on_verb(self, verb: BatchVerb | None) -> None:
+        if verb is None:
+            return
+        if self._batching is None:
+            self._set_status(NOT_CONFIGURED)
+            return
+        targets = self._targets()
+        if not targets:
+            self._set_status(f"Nothing to {verb}")
+            return
+        match verb:
+            case BatchVerb.PLAN:
+                self._plan(self._batching, targets)
+            case BatchVerb.RUN:
+                self._run(self._batching, targets)
+            case _:
+                self._label(self._batching, verb, targets)
+
+    def _targets(self) -> tuple[int, ...]:
+        """The marks, in the order they were made; the cursor row failing that."""
+        if self._marks.count:
+            return self._marks.numbers
+        number = self._view_widgets[self._view].selected_issue_number
+        return () if number is None else (number,)
+
+    def _finish_verb(self, line: str) -> None:
+        """Every verb changes labels and consumes its marks."""
+        self._clear_marks()
+        self._refresh(line)
+
+    @work(group="action")
+    async def _label(
+        self, batching: Batching, verb: BatchVerb, targets: tuple[int, ...]
+    ) -> None:
+        try:
+            lines = await asyncio.to_thread(_labelled, batching, verb, targets)
+        except _VERB_FAILURES as exc:
+            self._set_status(f"Error: {exc}")
+            return
+        self._finish_verb(lines.line)
+
+    def _plan(self, batching: Batching, targets: tuple[int, ...]) -> None:
+        try:
+            with self.suspend():
+                outcome = batching.plan_session(targets)
+        except _VERB_FAILURES as exc:
+            self._set_status(f"Error: {exc}")
+            return
+        line = (
+            "Planning session finished"
+            if outcome.returncode == 0
+            else f"Planning session exited with status {outcome.returncode}"
+        )
+        if outcome.refusal is not None:
+            line += f"; {outcome.refusal}"
+        self._finish_verb(line)
+
+    def _run(self, batching: Batching, targets: tuple[int, ...]) -> None:
+        if self._run_screen is not None and self._run_screen.live:
+            self._set_status("A batch run is already live")
+            self.action_show_run()
+            return
+        narration: list[str] = []
+        try:
+            with run_lock(batching.run_root):
+                pass
+            drive = batching.drive(targets, narration.append)
+        except BatchInProgressError as exc:
+            self._set_status(str(exc))
+            return
+        except _VERB_FAILURES as exc:
+            self._set_status(f"Error: {exc}")
+            return
+        if self._run_screen is not None:
+            self._run_screen.uninstall_from(self)
+
+        def run() -> RunResult:
+            with run_lock(batching.run_root), awake(narration.append):
+                return drive.run()
+
+        screen = DashboardScreen(
+            targets,
+            drive.orchestrator,
+            prog=batching.prog,
+            verbs=drive.verbs,
+            narration=narration,
+            drive=run,
+        )
+        self._run_screen = screen
+        screen.install_on(self, RUN_SCREEN)
+        self.push_screen(RUN_SCREEN)
+        self._finish_verb(f"Running batch over {targets_line(targets)}")
+
+    def action_show_run(self) -> None:
+        if self._run_screen is None:
+            self._set_status("No batch run to show")
+            return
+        self.push_screen(RUN_SCREEN)
+
+    def on_dashboard_screen_run_changed(self) -> None:
+        self.query_one(StatusBar).set_run_live(self.run_live)
+
     # --- Mutations ---
 
     @work(group="action")
@@ -593,6 +789,28 @@ class OrbitApp(App[None]):
         self._refresh(f"Closed #{issue_number}")
 
 
+def _labelled(
+    batching: Batching, verb: BatchVerb, targets: tuple[int, ...]
+) -> VerbLines:
+    match verb:
+        case BatchVerb.QUEUE:
+            return queue_lines("Queued", "queue", batching.queue(targets))
+        case BatchVerb.UNQUEUE:
+            return queue_lines("Unqueued", "unqueue", batching.unqueue(targets))
+        case BatchVerb.APPROVE:
+            return approve_lines(batching.approve(targets))
+        case BatchVerb.FAST_TRACK:
+            return approve_lines(batching.fast_track(targets))
+        case BatchVerb.PLAN | BatchVerb.RUN:
+            raise ValueError(f"{verb} is not a labelling verb")
+
+
 def run_tui(client: GitHubClient, config: ProjectConfig) -> None:
-    """Launch the interactive orbit TUI against the project's config."""
-    OrbitApp(client, config.milestones, config.commands).run()
+    """Launch the interactive orbit TUI against the project's config.
+
+    A run left live on quit keeps its VMs; said here, after the alt screen is
+    gone, as `batch run` says it."""
+    app = OrbitApp(client, config.milestones, config.commands, load_batching())
+    app.run()
+    if app.run_live:
+        click.echo(IN_FLIGHT)

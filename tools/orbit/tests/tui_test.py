@@ -7,9 +7,11 @@ not widget internals — so they should survive refactoring of the TUI.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
-from typing import Protocol, cast
+from pathlib import Path
+from subprocess import CalledProcessError
+from typing import Protocol, cast, override
 from unittest.mock import call, patch
 
 import pytest
@@ -19,11 +21,32 @@ from textual.widgets import OptionList, Static
 from textual.widgets.tree import TreeNode
 from textual.worker import WorkerError
 
+from batch.lock import BatchInProgressError, run_lock
+from batch.models import (
+    ApproveResult,
+    DashboardRow,
+    QueueResult,
+    RunResult,
+    SkippedIssue,
+)
+from batch.runtime import Drive, PlanOutcome
+from batch.testing.driving import FakeDriver, FakeVerbs
+from batch.text_output import targets_line
+from batch.tui.screen import DashboardScreen
 from ghgql.errors import IssueNotFoundError
 from ghgql.fake import FakeTransport
+from ghgql.labels import CONFLICT, BatchLabel, glyph
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL
-from orbit.config import CommandMode, CustomCommand, Milestones, ProjectConfig
+from orbit.batching import Batching, BatchVerb
+from orbit.config import (
+    CommandMode,
+    ConfigError,
+    CustomCommand,
+    Milestones,
+    ProjectConfig,
+    _parse,  # pyright: ignore[reportPrivateUsage]
+)
 from orbit.github.client import GitHubClient
 from orbit.github.models import (
     AlreadyDoneError,
@@ -39,8 +62,9 @@ from orbit.github.models import (
     Surface,
 )
 from orbit.github.orchestrators import close_issue
-from orbit.tui.app import OrbitApp, run_tui
+from orbit.tui.app import IN_FLIGHT, OrbitApp, run_tui
 from orbit.tui.screens import (
+    BatchVerbScreen,
     BranchPromptScreen,
     DetailScreen,
     EpicPickerScreen,
@@ -49,6 +73,7 @@ from orbit.tui.screens import (
     MilestonePickerScreen,
 )
 from orbit.tui.widgets import (
+    MARK,
     FilteredNodeData,
     IssueList,
     IssueTree,
@@ -304,12 +329,22 @@ def _status_text(app: OrbitApp) -> str:
     return str(bar.query_one("#status-message", Static).content)
 
 
+def _label(node: TreeNode[TreeItemData]) -> str:
+    """A node's rendered label, minus the blank mark and batch-glyph
+    columns.
+
+    Stripping them keeps these assertions about tree structure;
+    `widgets_test` covers the glyphs themselves.
+    """
+    return str(node.label).removeprefix("   ")
+
+
 def _root_labels(tree: IssueTree) -> list[str]:
-    return [str(node.label) for node in tree.root.children]
+    return [_label(node) for node in tree.root.children]
 
 
 def _section_labels(tree: IssueTree) -> list[str]:
-    return [str(child.label) for child in tree.root.children[-1].children]
+    return [_label(child) for child in tree.root.children[-1].children]
 
 
 def _visible_labels(tree: IssueTree) -> list[str]:
@@ -318,7 +353,7 @@ def _visible_labels(tree: IssueTree) -> list[str]:
 
     def below(node: TreeNode[TreeItemData]) -> Iterator[str]:
         for child in node.children:
-            yield str(child.label)
+            yield _label(child)
             if child.is_expanded:
                 yield from below(child)
 
@@ -816,7 +851,7 @@ class TestHideClosed:
                 mock_subs.assert_called_once_with(860)
                 node = app.query_one(IssueTree).root.children[2]
                 assert node.is_expanded
-                assert [str(child.label) for child in node.children] == [
+                assert [_label(child) for child in node.children] == [
                     "#910 leaf a",
                     "1/1 <1 issue filtered>",
                 ]
@@ -830,7 +865,7 @@ class TestHideClosed:
                 await pilot.press("down", "right")
                 await _settle(pilot)
                 node = app.query_one(IssueTree).root.children[1]
-                assert [str(child.label) for child in node.children] == [
+                assert [_label(child) for child in node.children] == [
                     "#852 0/4 Test speed",
                     "#853 0/2 Old deploys",
                 ]
@@ -928,8 +963,8 @@ class TestHideClosed:
                 await pilot.press("right", "down", "down", "right")
                 await _settle(pilot)
                 run = app.query_one(IssueTree).root.children[0].children[1]
-                assert str(run.label) == "<2 issues filtered>"
-                assert [str(child.label) for child in run.children] == [
+                assert _label(run) == "<2 issues filtered>"
+                assert [_label(child) for child in run.children] == [
                     "#913 dead a",
                     "#914 0/1 dead parent",
                 ]
@@ -999,7 +1034,7 @@ class TestHideClosed:
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
                 run = tree.root.children[0].children[1]
-                assert str(run.label) == "<2 issues filtered>"
+                assert _label(run) == "<2 issues filtered>"
                 assert not run.is_expanded
                 labels = _visible_labels(tree)
                 assert not any("#913" in label or "#914" in label for label in labels)
@@ -1255,12 +1290,34 @@ class TestStandaloneSection:
                 tree = _the_app(pilot).query_one(IssueTree)
                 labels = _root_labels(tree)
                 assert labels[-1] == "STANDALONE"
-                assert [
-                    str(child.label) for child in tree.root.children[-1].children
-                ] == [
+                assert [_label(child) for child in tree.root.children[-1].children] == [
                     "#30 solo a",
                     "#31 solo b",
                     "#32 solo c",
+                ]
+
+    @pytest.mark.asyncio
+    async def test_a_batch_label_reaches_the_rendered_row(self) -> None:
+        queued = [
+            MilestoneIssue(
+                number=30,
+                state="OPEN",
+                title="solo a",
+                parent_number=None,
+                is_epic=False,
+                labels=("queued",),
+            )
+        ]
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=queued),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                section = tree.root.children[-1]
+                assert [str(child.label) for child in section.children] == [
+                    " q #30 solo a"
                 ]
 
     @pytest.mark.asyncio
@@ -1303,7 +1360,7 @@ class TestStandaloneSection:
                 await _settle(pilot)
                 app = _the_app(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
-                assert [str(child.label) for child in section.children] == [
+                assert [_label(child) for child in section.children] == [
                     "#30 solo a",
                     "<1 issue filtered>",
                     "#32 solo c",
@@ -1322,7 +1379,7 @@ class TestStandaloneSection:
                 app = _the_app(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
                 assert str(section.label) == "STANDALONE"
-                assert [str(child.label) for child in section.children] == [
+                assert [_label(child) for child in section.children] == [
                     "<1 issue filtered>"
                 ]
 
@@ -1360,7 +1417,7 @@ class TestStandaloneSection:
                 placeholder = section.children[1]
                 assert section.is_expanded
                 assert placeholder.is_expanded
-                assert [str(child.label) for child in placeholder.children] == [
+                assert [_label(child) for child in placeholder.children] == [
                     "#31 solo b"
                 ]
                 mock_subs.assert_not_called()
@@ -1469,6 +1526,44 @@ class TestHelpModal:
                 assert "f  Toggle hide-closed" in panel
 
     @pytest.mark.asyncio
+    async def test_lists_the_mark_keys(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                assert "space  Mark issue and advance" in panel
+                assert "u  Unmark issue" in panel
+                assert "U  Unmark all" in panel
+
+    @pytest.mark.asyncio
+    async def test_the_color_legend_keeps_the_blank_glyph_column(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                samples = [
+                    line for line in panel.split("\n") if line.lstrip().startswith("#")
+                ]
+                assert len(samples) == 3
+                assert all(line.index("#") == 3 for line in samples)
+
+    @pytest.mark.asyncio
+    async def test_the_legend_names_every_glyph(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                for label in BatchLabel:
+                    assert f"{glyph((label,))}  {label.value}" in panel
+                assert f"{CONFLICT}  more than one batch label" in panel
+
+    @pytest.mark.asyncio
     async def test_main_screen_actions_blocked_while_modal_open(self) -> None:
         with (
             _patched_github() as client,
@@ -1530,9 +1625,14 @@ class TestConfiguredMilestones:
     def test_run_tui_hands_the_app_the_loaded_config(self) -> None:
         client = GitHubClient(GitHubGraphQL(FakeTransport([])), Repo(*_REPO))
         config = ProjectConfig(milestones=_APP_MILESTONES, commands=(_SPAWN_COMMAND,))
-        with patch("orbit.tui.app.OrbitApp") as mock_app:
+        with (
+            patch("orbit.tui.app.OrbitApp") as mock_app,
+            patch(_PATCH_BATCHING, return_value=None),
+        ):
             run_tui(client, config)
-        mock_app.assert_called_once_with(client, _APP_MILESTONES, (_SPAWN_COMMAND,))
+        mock_app.assert_called_once_with(
+            client, _APP_MILESTONES, (_SPAWN_COMMAND,), None
+        )
 
 
 class TestMoveAction:
@@ -1884,6 +1984,11 @@ class TestReservedKeys:
         assert len(declared) == len(OrbitApp.BINDINGS)
         # The exit keys are the ones a config most plausibly reaches for.
         assert {"q", "escape"} <= reserved
+
+    def test_the_mark_keys_are_reserved(self) -> None:
+        # space is also bound on IssueTree to beat Tree's toggle_node;
+        # reserved_keys() reads only the app, so it must be here too.
+        assert {"space", "u", "U"} <= OrbitApp.reserved_keys()
 
 
 class TestCustomCommands:
@@ -2674,3 +2779,1218 @@ class TestGotoStandalone:
                 assert tree.selected_issue_number == 30
                 assert tree.hide_closed
                 assert "Jumped to #30" in _status_text(app)
+
+
+_GLYPH_EPICS = [
+    Epic(
+        number=905,
+        state="OPEN",
+        title="orbit dev tool",
+        open_count=1,
+        total_count=1,
+        labels=("stuck",),
+    )
+]
+
+_GLYPH_SUBS = [
+    SubIssueData(
+        number=910, state="OPEN", title="leaf a", children=(), labels=("queued",)
+    ),
+    SubIssueData(
+        number=911,
+        state="OPEN",
+        title="nested epic",
+        labels=("planned",),
+        children=(
+            SubIssueData(
+                number=912,
+                state="OPEN",
+                title="deep",
+                children=(),
+                labels=("implementing",),
+            ),
+        ),
+    ),
+]
+
+_GLYPH_FLAT = [
+    MilestoneIssue(
+        number=20,
+        state="OPEN",
+        title="flat a",
+        parent_number=905,
+        is_epic=False,
+        labels=("ready-for-review",),
+    )
+]
+
+
+@contextmanager
+def _glyph_github() -> Generator[GitHubClient]:
+    with (
+        _patched_github() as client,
+        patch.object(client, "list_epics_by_milestone", return_value=_GLYPH_EPICS),
+        patch.object(client, "fetch_sub_issue_tree", return_value=_GLYPH_SUBS),
+        patch.object(client, "list_issues_by_milestone", return_value=_GLYPH_FLAT),
+    ):
+        yield client
+
+
+class TestBatchGlyphsReachEverySurface:
+    @pytest.mark.asyncio
+    async def test_epic_rows_and_every_sub_issue_depth_carry_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                tree = app.query_one(IssueTree)
+                epic = tree.root.children[0]
+                nested = epic.children[1]
+                nested.expand()
+                await _settle(pilot)
+                assert str(epic.label).startswith(" s ")
+                assert [str(c.label)[1] for c in epic.children] == ["q", "p"]
+                assert str(nested.children[0].label).startswith(" i ")
+
+    @pytest.mark.asyncio
+    async def test_hide_closed_children_keep_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                epic = app.query_one(IssueTree).root.children[0]
+                assert [str(c.label)[1] for c in epic.children] == ["q", "p"]
+
+    @pytest.mark.asyncio
+    async def test_the_flat_list_rows_carry_their_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                option = app.query_one("#sprint-list", IssueList).get_option_at_index(0)
+                assert str(option.prompt).startswith(" r #20")
+
+    @pytest.mark.asyncio
+    async def test_the_epic_picker_carries_the_glyph(self) -> None:
+        with _glyph_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("m")
+                await _settle(pilot)
+                screen = app.screen
+                assert isinstance(screen, EpicPickerScreen)
+                option = screen.query_one(OptionList).get_option_at_index(0)
+                assert str(option.prompt).startswith(" s #905")
+
+
+_MIXED_FLAT = [
+    MilestoneIssue(
+        number=number, state=state, title=title, parent_number=905, is_epic=False
+    )
+    for number, state, title in (
+        (30, "OPEN", "live a"),
+        (31, "CLOSED", "done a"),
+        (32, "CLOSED", "done b"),
+        (33, "OPEN", "live b"),
+    )
+]
+
+
+def _mark_count_text(app: OrbitApp) -> str:
+    bar = app.query_one(StatusBar)
+    return str(bar.query_one("#mark-count", Static).content)
+
+
+def _marked(node: TreeNode[TreeItemData]) -> bool:
+    return str(node.label).startswith(MARK)
+
+
+def _prompts(issue_list: IssueList) -> list[str]:
+    """Each row's two glyph columns and number, title dropped."""
+    prompts = [
+        str(issue_list.get_option_at_index(i).prompt)
+        for i in range(issue_list.option_count)
+    ]
+    return [prompt[: prompt.index(" ", 3)] for prompt in prompts]
+
+
+class TestMarks:
+    @pytest.mark.asyncio
+    async def test_space_in_the_tree_toggles_the_cursor_row_and_advances(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                first, second = tree.root.children[:2]
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(first)
+                assert not _marked(second)
+                assert tree.cursor_node is second
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert not _marked(first)
+
+    @pytest.mark.asyncio
+    async def test_space_in_the_tree_leaves_expansion_alone(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(client, "fetch_sub_issue_tree") as mock_subs,
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                epic = tree.root.children[0]
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(epic)
+                assert not epic.is_expanded
+                mock_subs.assert_not_called()
+                epic.expand()
+                await _settle(pilot)
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert not _marked(epic)
+                assert epic.is_expanded
+
+    @pytest.mark.asyncio
+    async def test_space_in_the_list_toggles_the_cursor_row_and_advances(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", "   #21"]
+                assert issue_list.highlighted == 1
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_u_unmarks_the_cursor_row_without_advancing(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                first = tree.root.children[0]
+                await pilot.press("space")
+                await pilot.press("up")
+                await _settle(pilot)
+                assert _marked(first)
+                await pilot.press("u")
+                await _settle(pilot)
+                assert not _marked(first)
+                assert tree.cursor_node is first
+                await pilot.press("u")
+                await _settle(pilot)
+                assert not _marked(first)
+                assert tree.cursor_node is first
+
+    @pytest.mark.asyncio
+    async def test_space_on_the_last_tree_row_marks_and_stays_put(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
+                last = tree.root.children[-1]
+                await pilot.press("end")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(last)
+                assert tree.cursor_node is last
+
+    @pytest.mark.asyncio
+    async def test_space_on_the_last_list_row_marks_and_stays_put(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("end")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", f"{MARK}  #21"]
+                assert issue_list.highlighted == 1
+
+    @pytest.mark.asyncio
+    async def test_capital_u_clears_marks_made_in_more_than_one_view(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("e")
+                await _settle(pilot)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(tree.root.children[0])
+                await pilot.press("U")
+                await _settle(pilot)
+                assert not _marked(tree.root.children[0])
+                await pilot.press("c")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_marks_survive_a_refresh(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(
+                client, "list_epics_by_milestone", return_value=_EPICS
+            ) as mock_epics,
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                fetches = mock_epics.call_count
+                await pilot.press("r")
+                await _settle(pilot)
+                assert mock_epics.call_count == fetches + 1
+                assert [_marked(node) for node in tree.root.children] == [
+                    True,
+                    True,
+                    False,
+                    False,
+                    False,
+                ]
+
+    @pytest.mark.asyncio
+    async def test_marks_survive_switching_views(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("e")
+                await _settle(pilot)
+                await pilot.press("b")
+                await _settle(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_marks_follow_the_issue_number_when_rows_reorder(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await _settle(pilot)
+                with patch.object(
+                    client,
+                    "list_issues_by_milestone",
+                    return_value=list(reversed(_FLAT_ISSUES)),
+                ):
+                    await pilot.press("r")
+                    await _settle(pilot)
+                assert _prompts(issue_list) == ["   #21", f"{MARK}  #20"]
+
+    @pytest.mark.asyncio
+    async def test_the_status_bar_counts_marks_the_current_view_hides(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                assert _mark_count_text(app) == ""
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("e")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "1 marked"
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "2 marked"
+                await pilot.press("U")
+                await _settle(pilot)
+                assert _mark_count_text(app) == ""
+
+    @pytest.mark.asyncio
+    async def test_space_on_a_placeholder_row_marks_nothing(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("down")
+                run = tree.cursor_node
+                assert run is not None
+                assert isinstance(run.data, FilteredNodeData)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == ""
+                assert not run.is_expanded
+                assert not any(_marked(node) for node in tree.root.children)
+
+    @pytest.mark.asyncio
+    async def test_u_and_capital_u_re_render_the_list_in_place(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", f"{MARK}  #21"]
+                await pilot.press("u")
+                await _settle(pilot)
+                assert _prompts(issue_list) == [f"{MARK}  #20", "   #21"]
+                assert issue_list.highlighted == 1
+                await pilot.press("U")
+                await _settle(pilot)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+
+    @pytest.mark.asyncio
+    async def test_capital_u_with_hidden_closed_rows_in_a_list(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=_MIXED_FLAT),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("U")
+                await _settle(pilot)
+                assert app.is_running
+                assert _mark_count_text(app) == ""
+                assert not any(
+                    prompt.startswith(MARK) for prompt in _prompts(issue_list)
+                )
+
+    @pytest.mark.asyncio
+    async def test_space_in_a_list_hops_over_a_placeholder_row(self) -> None:
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=_MIXED_FLAT),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("c")
+                await _settle(pilot)
+                issue_list = app.query_one("#sprint-list", IssueList)
+                assert issue_list.selected_issue_number == 30
+                await pilot.press("space")
+                await _settle(pilot)
+                assert issue_list.selected_issue_number == 33
+                assert _prompts(issue_list)[0] == f"{MARK}  #30"
+
+    @pytest.mark.asyncio
+    async def test_a_mark_change_reaches_a_view_goto_reveals_without_reloading(
+        self,
+    ) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("b")
+                await _settle(pilot)
+                await pilot.press("U")
+                await _settle(pilot)
+                await pilot.press("g")
+                await _settle(pilot)
+                await pilot.press("9", "0", "5", "enter")
+                await _settle(pilot)
+                assert tree.display
+                assert not _marked(tree.root.children[0])
+
+    @pytest.mark.asyncio
+    async def test_space_in_a_list_reaches_the_tree_goto_reveals_without_reloading(
+        self,
+    ) -> None:
+        with _standalone_milestone_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("c")
+                await _settle(pilot)
+                assert (
+                    app.query_one("#sprint-list", IssueList).selected_issue_number
+                    == 905
+                )
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("b")
+                await _settle(pilot)
+                await pilot.press("g")
+                await _settle(pilot)
+                await pilot.press("9", "0", "5", "enter")
+                await _settle(pilot)
+                assert tree.display
+                assert _marked(tree.root.children[0])
+
+    @pytest.mark.asyncio
+    async def test_a_nested_epic_re_renders_both_of_its_rows(self) -> None:
+        nested = [
+            SubIssueData(number=852, state="CLOSED", title="Test speed", children=())
+        ]
+        with (
+            _patched_github() as client,
+            patch.object(client, "fetch_sub_issue_tree", return_value=nested),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
+                await pilot.press("right")
+                await _settle(pilot)
+                top, under_epic = (
+                    tree.root.children[1],
+                    tree.root.children[0].children[0],
+                )
+                await pilot.press("down")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(top)
+                assert _marked(under_epic)
+                await pilot.press("up")
+                await pilot.press("u")
+                await _settle(pilot)
+                assert not _marked(top)
+                assert not _marked(under_epic)
+
+    @pytest.mark.asyncio
+    async def test_mark_keys_are_blocked_behind_the_help_modal(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                assert isinstance(app.screen, HelpScreen)
+                await pilot.press("U")
+                await pilot.press("up")
+                await pilot.press("u")
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                assert [_marked(node) for node in tree.root.children[:2]] == [
+                    True,
+                    False,
+                ]
+                assert _mark_count_text(app) == "1 marked"
+
+
+_BATCH_PROG = "bin/acme"
+_APPROVED_LINE = (
+    "Approved #20; Skipped 1 closed issue.; "
+    "#20 already has a Test Plan; guidance not written"
+)
+_CLAIMS_D = """
+[milestone]
+current = "s"
+backlog = "b"
+[[commands]]
+key = "d"
+label = "Diff"
+run = "git diff"
+"""
+_REFUSAL = (
+    "plan-4321 is not safe to remove: the worktree has local changes; "
+    f"`{_BATCH_PROG} gc` once you are done with it."
+)
+_PATCH_BATCHING = "orbit.tui.app.load_batching"
+
+
+def _batch_row(number: int) -> DashboardRow:
+    return DashboardRow(
+        number=number, title=f"Issue {number}", state=BatchLabel.PLANNED
+    )
+
+
+class FakeBatching(Batching):
+    """Records every verb; `run` blocks until the driver is released."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        raises: Exception | None = None,
+        plan: PlanOutcome | None = None,
+        run_fails: RuntimeError | None = None,
+    ) -> None:
+        self.run_root: Path = root
+        self.prog: str = _BATCH_PROG
+        self.calls: list[tuple[str, tuple[int, ...]]] = []
+        self.raises: Exception | None = raises
+        self.run_fails: RuntimeError | None = run_fails
+        self.plan: PlanOutcome = plan or PlanOutcome(("vibe",), 0)
+        self.driver: FakeDriver = FakeDriver(_batch_row(20), _batch_row(21))
+        self.drives: int = 0
+
+    def _record(self, verb: str, targets: Sequence[int]) -> tuple[int, ...]:
+        self.calls.append((verb, tuple(targets)))
+        if self.raises is not None:
+            raise self.raises
+        return tuple(targets)
+
+    def _queued(self, verb: str, targets: Sequence[int]) -> QueueResult:
+        return QueueResult(
+            labeled=self._record(verb, targets),
+            skipped=(SkippedIssue(number=99, reason="already planned"),),
+        )
+
+    def _approved(self, verb: str, targets: Sequence[int]) -> ApproveResult:
+        numbers = self._record(verb, targets)
+        return ApproveResult(
+            approved=numbers,
+            skipped=(SkippedIssue(number=98, reason="closed"),),
+            guidance_refused=numbers[:1],
+        )
+
+    @override
+    def queue(self, targets: Sequence[int]) -> QueueResult:
+        return self._queued("queue", targets)
+
+    @override
+    def unqueue(self, targets: Sequence[int]) -> QueueResult:
+        return self._queued("unqueue", targets)
+
+    @override
+    def approve(self, targets: Sequence[int]) -> ApproveResult:
+        return self._approved("approve", targets)
+
+    @override
+    def fast_track(self, targets: Sequence[int]) -> ApproveResult:
+        return self._approved("fast-track", targets)
+
+    @override
+    def plan_session(self, targets: Sequence[int]) -> PlanOutcome:
+        _ = self._record("plan", targets)
+        return self.plan
+
+    @override
+    def drive(self, targets: Sequence[int], report: Callable[[str], None]) -> Drive:
+        _ = self._record("run", targets)
+        self.drives += 1
+        report(f"driving {targets_line(targets)}")
+        return Drive(self.driver, FakeVerbs(), lambda: self._drive(targets))
+
+    def _drive(self, targets: Sequence[int]) -> RunResult:
+        if self.run_fails is not None:
+            raise self.run_fails
+        return self.driver.run(targets)
+
+
+def _batch_app(client: GitHubClient, batching: Batching | None) -> OrbitApp:
+    return OrbitApp(client, _APP_MILESTONES, batching=batching)
+
+
+async def _pick(pilot: Pilot[None], verb: str) -> None:
+    """Open the menu and select `verb` by walking the list."""
+    await pilot.press("exclamation_mark")
+    await _settle(pilot)
+    menu = pilot.app.screen
+    assert isinstance(menu, BatchVerbScreen)
+    for _ in range(list(BatchVerb).index(BatchVerb(verb))):
+        await pilot.press("down")
+    await pilot.press("enter")
+    await _settle(pilot)
+
+
+async def _in_sprint(pilot: Pilot[None]) -> None:
+    await pilot.press("c")
+    await _settle(pilot)
+
+
+class TestBatchMenu:
+    @pytest.mark.asyncio
+    async def test_bang_opens_the_six_verbs_in_order_and_escape_runs_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("exclamation_mark")
+                await _settle(pilot)
+                menu = app.screen
+                assert isinstance(menu, BatchVerbScreen)
+                options = menu.query_one(OptionList)
+                assert [
+                    str(options.get_option_at_index(i).prompt)
+                    for i in range(options.option_count)
+                ] == ["queue", "plan", "approve", "fast-track", "unqueue", "run"]
+                await pilot.press("escape")
+                await _settle(pilot)
+                assert not isinstance(app.screen, BatchVerbScreen)
+                assert batching.calls == []
+
+    @pytest.mark.asyncio
+    async def test_marked_numbers_reach_the_verb_in_marking_order(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _in_sprint(pilot)
+                await pilot.press("down")
+                await pilot.press("space")
+                await pilot.press("up")
+                await pilot.press("space")
+                await _settle(pilot)
+                await _pick(pilot, "queue")
+                assert batching.calls == [("queue", (21, 20))]
+
+    @pytest.mark.asyncio
+    async def test_the_cursor_row_is_the_target_when_nothing_is_marked(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _in_sprint(pilot)
+                await pilot.press("down")
+                await _pick(pilot, "unqueue")
+                assert batching.calls == [("unqueue", (21,))]
+
+    @pytest.mark.asyncio
+    async def test_an_epic_passes_through_as_its_own_number(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                tree.root.children[0].expand()
+                await _settle(pilot)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                await _pick(pilot, "approve")
+                assert batching.calls == [("approve", (905, 910))]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verb", [verb.value for verb in BatchVerb])
+    async def test_a_placeholder_under_the_cursor_and_no_marks_is_nothing_to_do(
+        self, tmp_path: Path, verb: str
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=[]),
+        ):
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _in_sprint(pilot)
+                app = _the_app(pilot)
+                await _pick(pilot, verb)
+                assert _status_text(app) == f"Nothing to {verb}"
+                assert batching.calls == []
+                assert app.screen is app.screen_stack[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("verb", "line"),
+        [
+            ("queue", "Queued #20; Skipped #99 (already planned)"),
+            ("unqueue", "Unqueued #20; Skipped #99 (already planned)"),
+            ("approve", _APPROVED_LINE),
+            ("fast-track", _APPROVED_LINE),
+        ],
+    )
+    async def test_each_labelling_verb_puts_the_cli_line_on_the_status_bar(
+        self, tmp_path: Path, verb: str, line: str
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _in_sprint(pilot)
+                app = _the_app(pilot)
+                await _pick(pilot, verb)
+                assert batching.calls == [(verb, (20,))]
+                assert _status_text(app) == line
+
+    @pytest.mark.asyncio
+    async def test_a_verb_refreshes_the_view_and_clears_every_mark(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with (
+            _patched_github() as client,
+            patch.object(
+                client, "list_issues_by_milestone", return_value=_FLAT_ISSUES
+            ) as mock_issues,
+        ):
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("space")
+                await _in_sprint(pilot)
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "2 marked"
+                fetched = mock_issues.call_count
+                await _pick(pilot, "queue")
+                assert _mark_count_text(app) == ""
+                assert mock_issues.call_count == fetched + 1
+                issue_list = app.query_one("#sprint-list", IssueList)
+                assert _prompts(issue_list) == ["   #20", "   #21"]
+                assert not _marked(app.query_one(IssueTree).root.children[0])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verb", [verb.value for verb in BatchVerb])
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            RuntimeError("GitHub said 503"),
+            CalledProcessError(128, ["git", "worktree", "add"]),
+        ],
+        ids=["runtime", "git"],
+    )
+    async def test_a_verb_that_raises_lands_on_the_status_bar(
+        self, tmp_path: Path, verb: str, failure: Exception
+    ) -> None:
+        batching = FakeBatching(tmp_path, raises=failure)
+        with (
+            _patched_github() as client,
+            patch.object(OrbitApp, "suspend"),
+        ):
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _in_sprint(pilot)
+                app = _the_app(pilot)
+                await _pick(pilot, verb)
+                assert _status_text(app) == f"Error: {failure}"
+                assert app.is_running
+                assert app.screen is app.screen_stack[0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verb", [verb.value for verb in BatchVerb])
+    async def test_without_batch_toml_every_verb_reports_not_configured(
+        self, verb: str
+    ) -> None:
+        with _patched_github() as client:
+            async with _batch_app(client, None).run_test() as pilot:
+                await _in_sprint(pilot)
+                app = _the_app(pilot)
+                await _pick(pilot, verb)
+                assert _status_text(app) == "This repo is not configured for batch"
+                assert app.is_running
+
+    def test_bang_and_d_are_reserved(self) -> None:
+        assert {"!", "d"} <= OrbitApp.reserved_keys()
+
+    def test_a_config_claiming_d_is_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / ".orbit.toml"
+        _ = path.write_text(_CLAIMS_D)
+        with pytest.raises(ConfigError) as caught:
+            _ = _parse(path, path.read_text(), OrbitApp.reserved_keys())
+        assert 'key "d" is already bound by orbit' in str(caught.value)
+
+    @pytest.mark.asyncio
+    async def test_help_lists_bang_and_d(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("question_mark")
+                await _settle(pilot)
+                panel = str(pilot.app.screen.query_one("#help-panel", Static).content)
+                assert "!  Batch verb menu" in panel
+                assert "d  Back to the batch run" in panel
+
+
+def _run_state_text(app: OrbitApp) -> str:
+    bar = app.query_one(StatusBar)
+    return str(bar.query_one("#run-state", Static).content)
+
+
+def _screen_status(app: OrbitApp) -> str:
+    return str(app.screen.query_one("#status", Static).content)
+
+
+async def _until(pilot: Pilot[None], ready: Callable[[], bool], what: str) -> None:
+    """The run screen ticks on its own timer, so a change on the thread can
+    take a beat to reach a widget."""
+    for _ in range(60):
+        if ready():
+            return
+        await pilot.pause(0.1)
+    raise AssertionError(f"the app never {what}")
+
+
+async def _running(pilot: Pilot[None], batching: FakeBatching) -> DashboardScreen:
+    """Start a run over #20 from the sprint view and hand back its screen."""
+    await _in_sprint(pilot)
+    await _pick(pilot, "run")
+    screen = pilot.app.screen
+    assert isinstance(screen, DashboardScreen)
+    await _until(pilot, batching.driver.running.is_set, "started the run thread")
+    return screen
+
+
+class TestBatchRun:
+    @pytest.mark.asyncio
+    async def test_run_drives_on_a_thread_and_pushes_the_run_screen(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                await _in_sprint(pilot)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "2 marked"
+                await _pick(pilot, "run")
+                screen = app.screen
+                assert isinstance(screen, DashboardScreen)
+                await _until(
+                    pilot, batching.driver.running.is_set, "started the run thread"
+                )
+                assert batching.calls == [("run", (20, 21))]
+                assert screen.targets == (20, 21)
+                assert screen.live
+                assert app.run_live
+                assert not batching.driver.released.is_set()
+                await pilot.press("escape")
+                await _settle(pilot)
+                assert _mark_count_text(app) == ""
+                assert _status_text(app) == "Running batch over #20, #21"
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_d_before_any_run_says_there_is_none(self, tmp_path: Path) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("d")
+                await _settle(pilot)
+                assert _status_text(app) == "No batch run to show"
+                assert app.screen is app.screen_stack[0]
+                assert app.is_running
+
+    @pytest.mark.asyncio
+    async def test_escape_pops_and_d_returns_to_the_same_screen(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                screen = await _running(pilot, batching)
+                await pilot.press("escape")
+                await _settle(pilot)
+                assert app.screen is app.screen_stack[0]
+                assert batching.driver.running.is_set()
+                assert not batching.driver.released.is_set()
+                await pilot.press("d")
+                await _settle(pilot)
+                assert app.screen is screen
+                assert batching.drives == 1
+                assert batching.driver.runs == 1
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("key", "widget_id"),
+        [("e", "#epic-tree"), ("c", "#sprint-list"), ("b", "#backlog-list")],
+    )
+    async def test_a_view_key_pops_the_run_screen_onto_that_view(
+        self, tmp_path: Path, key: str, widget_id: str
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                _ = await _running(pilot, batching)
+                await pilot.press(key)
+                await _settle(pilot)
+                assert app.screen is app.screen_stack[0]
+                assert app.query_one(widget_id).display
+                assert app.run_live
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_the_status_bar_says_a_run_is_live_until_it_ends(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                _ = await _running(pilot, batching)
+                await pilot.press("escape")
+                await _settle(pilot)
+                assert _run_state_text(app) == "batch run live"
+                batching.driver.released.set()
+                await _until(
+                    pilot, lambda: _run_state_text(app) == "", "noticed the run end"
+                )
+                assert not app.run_live
+
+    @pytest.mark.asyncio
+    async def test_a_second_run_while_one_is_live_switches_to_the_screen(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                screen = await _running(pilot, batching)
+                await pilot.press("escape")
+                await _settle(pilot)
+                await pilot.press("down")
+                await _pick(pilot, "run")
+                assert app.screen is screen
+                assert batching.drives == 1
+                assert batching.driver.runs == 1
+                assert _status_text(app) == "A batch run is already live"
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_a_lock_held_elsewhere_is_reported_and_no_screen_is_pushed(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client, run_lock(tmp_path):
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                await _in_sprint(pilot)
+                await _pick(pilot, "run")
+                assert app.screen is app.screen_stack[0]
+                assert "another batch run holds" in _status_text(app)
+                assert batching.drives == 0
+                assert not app.run_live
+
+    @pytest.mark.asyncio
+    async def test_the_lock_is_released_when_the_run_finishes(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                _ = await _running(pilot, batching)
+                with pytest.raises(BatchInProgressError), run_lock(tmp_path):
+                    pass
+                batching.driver.released.set()
+                await _until(pilot, lambda: not app.run_live, "noticed the run end")
+                with run_lock(tmp_path):
+                    pass
+                await pilot.press("escape")
+                await _settle(pilot)
+                batching.driver.released.clear()
+                await _pick(pilot, "run")
+                assert batching.drives == 2
+                await _until(pilot, lambda: batching.driver.runs == 2, "ran again")
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_a_replaced_run_screen_is_unmounted(self, tmp_path: Path) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                first = await _running(pilot, batching)
+                batching.driver.released.set()
+                await _until(pilot, lambda: not app.run_live, "noticed the run end")
+                await pilot.press("escape")
+                await _settle(pilot)
+                batching.driver.released.clear()
+                await _pick(pilot, "run")
+                second = app.screen
+                assert second is not first
+                assert isinstance(second, DashboardScreen)
+                assert not first.is_attached
+                assert not first.is_running
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_a_run_that_fails_on_the_thread_is_reported_on_the_screen(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path, run_fails=RuntimeError("git said no"))
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                await _in_sprint(pilot)
+                await _pick(pilot, "run")
+                await _until(
+                    pilot,
+                    lambda: "Run failed: git said no" in _screen_status(app),
+                    "reported the failure",
+                )
+                assert app.is_running
+                assert not app.run_live
+
+    @pytest.mark.asyncio
+    async def test_quitting_with_a_run_live_exits_with_the_thread_still_blocked(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                _ = await _running(pilot, batching)
+                await pilot.press("escape")
+                await _settle(pilot)
+                await pilot.press("q")
+                await pilot.pause(0.1)
+                assert not app.is_running
+            assert app.run_live
+            assert batching.driver.running.is_set()
+            assert not batching.driver.released.is_set()
+            batching.driver.released.set()
+
+    @pytest.mark.parametrize(("live", "printed"), [(True, IN_FLIGHT), (False, "")])
+    def test_run_tui_says_what_a_live_run_leaves_behind(
+        self, live: bool, printed: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        client = GitHubClient(GitHubGraphQL(FakeTransport([])), Repo(*_REPO))
+        config = ProjectConfig(milestones=_APP_MILESTONES)
+
+        def is_live(_app: OrbitApp) -> bool:
+            return live
+
+        with (
+            patch.object(OrbitApp, "run"),
+            patch.object(OrbitApp, "run_live", property(is_live)),
+            patch(_PATCH_BATCHING, return_value=None),
+        ):
+            run_tui(client, config)
+        assert capsys.readouterr().out.strip() == printed
+
+    @pytest.mark.asyncio
+    async def test_main_screen_actions_are_blocked_on_the_run_screen(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client, patch(_PATCH_CLOSE) as mock_close:
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                screen = await _running(pilot, batching)
+                depth = len(app.screen_stack)
+                for key in ("m", "g", "space", "exclamation_mark", "d", "x"):
+                    await pilot.press(key)
+                    await _settle(pilot)
+                    assert app.screen is screen, key
+                    assert len(app.screen_stack) == depth, key
+                assert _mark_count_text(app) == ""
+                mock_close.assert_not_called()
+                await pilot.press("c")
+                await _settle(pilot)
+                assert app.screen is app.screen_stack[0]
+                assert app.query_one("#sprint-list").display
+            batching.driver.released.set()
+
+
+class TestBatchPlan:
+    @pytest.mark.asyncio
+    async def test_plan_runs_the_session_suspended_and_reports_the_exit_code(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(tmp_path, plan=PlanOutcome(("vibe",), 2))
+        with (
+            _patched_github() as client,
+            patch.object(OrbitApp, "suspend") as mock_suspend,
+        ):
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                await _in_sprint(pilot)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                await _pick(pilot, "plan")
+                mock_suspend.assert_called_once()
+                assert batching.calls == [("plan", (20, 21))]
+                assert _status_text(app) == "Planning session exited with status 2"
+                assert _mark_count_text(app) == ""
+
+    @pytest.mark.asyncio
+    async def test_a_live_run_keeps_going_across_a_plan(self, tmp_path: Path) -> None:
+        batching = FakeBatching(tmp_path)
+        with (
+            _patched_github() as client,
+            patch.object(OrbitApp, "suspend"),
+        ):
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                screen = await _running(pilot, batching)
+                await pilot.press("escape")
+                await _settle(pilot)
+                await _pick(pilot, "plan")
+                assert _status_text(app) == "Planning session finished"
+                assert batching.driver.running.is_set()
+                assert not batching.driver.released.is_set()
+                assert app.run_live
+                await pilot.press("d")
+                await _settle(pilot)
+                assert app.screen is screen
+            batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_a_reclaim_refusal_reaches_the_status_bar(
+        self, tmp_path: Path
+    ) -> None:
+        batching = FakeBatching(
+            tmp_path, plan=PlanOutcome(("vibe",), 0, refusal=_REFUSAL)
+        )
+        with (
+            _patched_github() as client,
+            patch.object(OrbitApp, "suspend"),
+        ):
+            async with _batch_app(client, batching).run_test() as pilot:
+                app = _the_app(pilot)
+                await _in_sprint(pilot)
+                await _pick(pilot, "plan")
+                assert _status_text(app) == f"Planning session finished; {_REFUSAL}"
+                assert f"`{_BATCH_PROG} gc`" in _status_text(app)

@@ -15,7 +15,6 @@ from batch.models import (
     AlreadyRunningError,
     Batch,
     BatchIssue,
-    BatchLabel,
     CiStatus,
     DroppedChild,
     LabelState,
@@ -29,11 +28,14 @@ from batch.models import (
     VmSession,
     VmStatus,
 )
+from batch.orchestrator import Orchestrator
 from batch.polling import SettledTargets
 from batch.state import BatchState
+from batch.teardown import Teardown
 from batch.verify import Verifier
 from batch.vm import GuestAccount, VmRunner
 from ghgql.fake import FakeTransport, Response
+from ghgql.labels import BatchLabel
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL
 
@@ -224,11 +226,10 @@ def missing(*numbers: int) -> Mapping[str, object]:
 
 
 def label_ids(missing: Sequence[str] = ()) -> Mapping[str, object]:
-    aliases = ("queued", "planned", "implementing", "readyForReview", "stuck")
     return {
         "repository": {
-            alias: None if alias in missing else {"id": f"LA_{alias}"}
-            for alias in aliases
+            f"l{index}": None if label in missing else {"id": f"LA_{label}"}
+            for index, label in enumerate(BatchLabel)
         }
     }
 
@@ -674,6 +675,12 @@ class FakeRunner:
         if self._staging_error is not None:
             raise self._staging_error
         self.staged.append((config_dir, headless))
+        self.journal.append(f"stage {config_dir.name}")
+
+    def vibe_command(self, session: VmSession) -> tuple[str, ...]:
+        return VmRunner(
+            self.root, worktree_root=lambda: self.root, config=batch_config
+        ).vibe_command(session)
 
     def launch(self, issue: int, session: VmSession) -> None:
         if issue in self._live:
@@ -699,6 +706,30 @@ class FakeRunner:
 
     def agents(self) -> list[str]:
         return [session.agent for _, session in self.launched]
+
+
+def fake_orchestrator(
+    state: FakeState,
+    root: Path,
+    failing: tuple[int, ...] = (),
+    report: Callable[[str], None] = lambda _line: None,
+    polls: Mapping[int, int] | None = None,
+) -> Orchestrator:
+    clock = FakeClock()
+    stack = FakeStack(root)
+    runner = FakeRunner(root, polls=polls)
+    verifier = FakeVerifier(failing)
+    return Orchestrator(
+        state,
+        stack,
+        runner,
+        verifier,
+        Teardown(state, stack, runner, verifier),
+        config=batch_config(),
+        report=report,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
 
 
 class FakeVms:

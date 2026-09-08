@@ -26,8 +26,14 @@ what workers are for (below).
 orbit/tui/
 ├── app.py      — OrbitApp: state, keybindings, data fetching, view switching
 ├── widgets.py  — things you see: IssueTree, IssueList, StatusBar
-└── screens.py  — things that overlay: DetailScreen, HelpScreen, EpicPickerScreen
+└── screens.py  — things that overlay: DetailScreen, HelpScreen, EpicPickerScreen,
+                  BatchVerbScreen
+orbit/batching.py — the Batching protocol orbit drives batch through
 ```
+
+The batch run screen itself is not here: `batch.tui.screen.DashboardScreen`
+is the one dashboard `batch run` and orbit both host (see "Batch verbs
+and the run screen").
 
 Layering rule: **widgets only render; the app fetches and decides.**
 Widgets never call the GitHub client — `IssueTree.load_epics(epics,
@@ -40,15 +46,16 @@ import).
 ## Lifecycle
 
 `run_tui(client, config)` → `OrbitApp(client, config.milestones,
-config.commands).run()`, where the `GitHubClient` is built once at the
-CLI entry point by `github_client()` and passed down to the overlay
-screens that fetch. Textual calls `compose()` to build
+config.commands, load_batching()).run()`, where the `GitHubClient` is
+built once at the CLI entry point by `github_client()` and passed down
+to the overlay screens that fetch, and `load_batching()` reads the
+checkout's `batch.toml` there too, so the app never loads a config. Textual calls `compose()` to build
 the widget tree (like initial HTML):
 
 ```python
 def compose(self) -> ComposeResult:
-    yield IssueTree(id="epic-tree")
-    yield IssueList(id="issue-list")
+    yield IssueTree(self._marks, id="epic-tree")
+    yield IssueList(self._marks, id="issue-list", ...)
     yield StatusBar()
 ```
 
@@ -102,6 +109,14 @@ Bindings resolve focused-widget → screen → app. Arrow keys are
 consumed by the tree/list; letters fall through to the app. The help
 modal binds `?` itself, which shadows the app's `?` and makes the same
 key toggle the modal closed.
+
+`space` is the one key bound in both places. Textual's `Tree` binds it
+to `toggle_node`, and the focused widget wins, so `IssueTree` carries a
+shadowing `Binding("space", "app.mark_toggle")` that routes it back up.
+The `app.` prefix matters: a bare action name would shadow
+`toggle_node` and then fire nothing. The app binding still has to
+exist, because `reserved_keys()` is derived from the app's `BINDINGS`
+alone.
 
 `check_action()` is the app-level veto hook: any action in
 `_MAIN_SCREEN_ACTIONS` is blocked while a modal or detail screen is on
@@ -214,15 +229,72 @@ Screens can return values: `EpicPickerScreen` is
 
 ## State
 
-The app holds two pieces of state: `_view` (an enum: EPICS / SPRINT /
-BACKLOG) and `_hide_closed`, which starts on and which it fans out to
-every view widget — at construction as well as on the toggle — because
-that filter applies to all of them. Each view is its own
+The app holds four pieces of state: `_view` (an enum: EPICS / SPRINT /
+BACKLOG), `_hide_closed`, which starts on and which it fans out to every view
+widget — at construction as well as on the toggle — because that
+filter applies to all of them, `_marks`, a `Marks`
+store (`orbit.marks`) of dired-style marks keyed by issue number and
+shared by every view widget, so marks outlive a refresh or a view
+switch, and `_run_screen`, the installed batch run screen if a run has
+been started (`run_live` asks it whether the thread is still going). Widgets read the store when they render a row and re-render a
+single row in place (`TreeNode.set_label`,
+`OptionList.replace_option_prompt_at_index`) when a mark changes; the status
+bar shows the count so marks in a hidden view are not invisible. Each view is its own
 widget — the epics tree plus one `IssueList` per flat view — mirroring
 what the user sees. An `IssueList` carries its view's query
 configuration (milestone, soon filterability) as plain data, and the
 backlog list owns the soon-only filter flag; one view-agnostic loader
 fetches for whichever list is visible.
+
+## Batch verbs and the run screen
+
+`!` pushes `BatchVerbScreen`, a modal `OptionList` of the six verbs
+(`orbit.batching.BatchVerb`); selecting one dismisses with it. The
+targets are the marks in marking order (`Marks.numbers`), or the
+cursor row when nothing is marked; epics pass through as their own
+number and batch expands them. A placeholder under the cursor with no
+marks is "Nothing to <verb>". Every verb then clears the marks and
+refreshes the visible view, because the labels it changed are what the
+view shows.
+
+The app reaches batch through the `Batching` protocol
+(`orbit/batching.py`), which `batch.runtime.Runtime` satisfies and the
+tests fake. `load_batching()` returns `None` when the checkout has no
+usable `batch.toml`, and every verb then reports "This repo is not
+configured for batch". `run_tui` does that load, so `OrbitApp` never
+reads a config.
+
+- **queue / approve / fast-track / unqueue** run in an `action` worker
+  and put the CLI's own wording on the status bar: the line builders in
+  `batch.text_output` (`queue_lines`, `approve_lines`) are what
+  `batch queue` prints, joined with `; `.
+- **plan** calls `plan_session` under `self.suspend()`, like a
+  `suspend`-mode custom command, and reports the VM's exit code and any
+  reclaim refusal afterwards.
+- **run** probes batch's run lock first (a `batch run` in a terminal is
+  reported and nothing else happens), then builds a `DashboardScreen`
+  over `Batching.drive(...)` and pushes it. The orchestrator runs on the
+  screen's daemon thread, wrapped in `run_lock` + `awake`, so the lock
+  is held exactly while the run thread lives and quitting orbit leaves
+  a VM in flight rather than blocking on it; `run_tui` says so on the
+  way out.
+
+The run screen is **installed** (`DashboardScreen.install_on`) under
+the name `RUN_SCREEN` and pushed by name: Textual removes an
+uninstalled screen on pop, and this one must keep its rows, selection
+and narration across `escape` and `d`. Its timers keep ticking while it
+is suspended, which is how the `#run-state` cell on the status bar
+learns the run ended (`DashboardScreen.RunChanged` bubbles to
+`on_dashboard_screen_run_changed`). A second `run` while one is live
+switches to the screen instead of starting another; a finished screen
+is uninstalled and replaced by the next run's.
+
+`check_action` treats the run screen as a third case: only
+`_RUN_SCREEN_ACTIONS` (`e`/`c`/`b`) fire over it, and each pops it
+first so the key lands on the view it names. `q`/`escape` are the
+screen's own bindings (pop here, quit under `DashboardApp`), and so
+are `f`/`s`/`r`, which shadow orbit's hide-closed/schedule/refresh
+there. `d` is reserved for returning to the screen.
 
 ## Testing
 

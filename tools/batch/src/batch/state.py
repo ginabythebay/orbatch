@@ -8,7 +8,6 @@ from batch.models import (
     ApproveResult,
     Batch,
     BatchIssue,
-    BatchLabel,
     ChildIssue,
     ConflictingLabelsError,
     DroppedChild,
@@ -21,12 +20,11 @@ from batch.models import (
     Target,
 )
 from batch.polling import SettledTargets
-
-_BATCH_LABELS = frozenset(label.value for label in BatchLabel)
+from ghgql.labels import BatchLabel, batch_labels
 
 
 def _batch_labels(child: ChildIssue) -> list[BatchLabel]:
-    return [BatchLabel(name) for name in child.labels if name in _BATCH_LABELS]
+    return batch_labels(child.labels)
 
 
 def _skip_reason(

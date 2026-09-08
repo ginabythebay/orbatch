@@ -1,19 +1,18 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from subprocess import CalledProcessError, CompletedProcess
 from typing import override
 
 import pytest
+from textual.app import App
 from textual.binding import Binding
 from textual.pilot import Pilot
 
 from batch.models import (
     Batch,
-    BatchLabel,
     DashboardRow,
     DebugEntry,
     DebugRefusal,
@@ -24,8 +23,11 @@ from batch.models import (
     RecoveryResult,
     RunResult,
 )
+from batch.testing.driving import BOOT, FakeDriver, FakeVerbs
 from batch.text_output import debug_line
-from batch.tui.app import DashboardApp, Driving
+from batch.tui.app import DashboardApp
+from batch.tui.screen import DashboardScreen
+from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
 
 pytestmark = pytest.mark.slow
@@ -38,64 +40,6 @@ def _row(number: int, state: BatchLabel = BatchLabel.PLANNED) -> DashboardRow:
     return DashboardRow(number=number, title=f"Issue {number}", state=state)
 
 
-class FakeDriver(Driving):
-    def __init__(
-        self,
-        *rows: DashboardRow,
-        live: Sequence[int] = (),
-        refused: DebugEntry | None = None,
-        result: RunResult | None = None,
-        rate_limit: RateLimit | None = None,
-    ) -> None:
-        self.rows: tuple[DashboardRow, ...] = rows
-        self.rate_limit: RateLimit | None = rate_limit
-        self.live: set[int] = set(live)
-        self.refused: DebugEntry | None = refused
-        self.booted: list[int] = []
-        self.result: RunResult | None = result
-        self.released: threading.Event = threading.Event()
-        self.running: threading.Event = threading.Event()
-        self.runs: int = 0
-        self.asked: list[tuple[int, ...]] = []
-        self.asked_to_enter: list[int] = []
-        self.selected: list[int | None] = []
-
-    @override
-    def run(self, targets: Sequence[int]) -> RunResult:
-        self.runs += 1
-        self.running.set()
-        if self.result is None:
-            _ = self.released.wait(timeout=10.0)
-            return RunResult(targets=tuple(targets), outcomes=())
-        return self.result
-
-    @override
-    def fetch(self, targets: Sequence[int]) -> Batch:
-        self.asked.append(tuple(targets))
-        return Batch(targets=tuple(targets), issues=(), rate_limit=self.rate_limit)
-
-    @override
-    def render(
-        self, batch: Batch, selected: int | None = None
-    ) -> tuple[DashboardRow, ...]:
-        self.selected.append(selected)
-        return self.rows
-
-    @override
-    def enter(self, issue_number: int) -> DebugEntry:
-        self.asked_to_enter.append(issue_number)
-        if self.refused is not None:
-            return self.refused
-        attach = ("dtach", "-a", f"/sockets/issue-{issue_number}.sock", "-r", "none")
-        if issue_number in self.live:
-            return DebugEntry(number=issue_number, command=attach)
-        self.booted.append(issue_number)
-        return DebugEntry(number=issue_number, command=attach, boot=_BOOT)
-
-
-_BOOT = ("dtach", "-n", "/sockets/issue.sock", "vibe")
-
-
 def _no_slot(issue_number: int) -> DebugEntry:
     return DebugEntry(
         number=issue_number,
@@ -106,7 +50,7 @@ def _no_slot(issue_number: int) -> DebugEntry:
 
 _REFUSED = (
     _no_slot(10),
-    DebugEntry(number=10, refusal=DebugRefusal.BOOT_FAILED, boot=_BOOT),
+    DebugEntry(number=10, refusal=DebugRefusal.BOOT_FAILED, boot=BOOT),
 )
 
 
@@ -125,7 +69,7 @@ def _attaches(monkeypatch: pytest.MonkeyPatch) -> list[Sequence[str]]:
         calls.append(command)
         return CompletedProcess(list(command), 0)
 
-    monkeypatch.setattr("batch.tui.app.subprocess.run", record)
+    monkeypatch.setattr("batch.tui.screen.subprocess.run", record)
     return calls
 
 
@@ -142,28 +86,28 @@ def _trace(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         finally:
             log.append("exit")
 
-    written = DashboardApp.status
+    written = DashboardScreen.status
 
-    def recorded(app: DashboardApp, message: str) -> None:
+    def recorded(screen: DashboardScreen, message: str) -> None:
         log.append("status")
-        written(app, message)
+        written(screen, message)
 
     monkeypatch.setattr(DashboardApp, "suspend", logged)
-    monkeypatch.setattr(DashboardApp, "status", recorded)
+    monkeypatch.setattr(DashboardScreen, "status", recorded)
     return log
 
 
-def _screen(app: DashboardApp) -> list[str]:
+def _screen(app: App[None]) -> list[str]:
     """Read the composited screen, not the widgets: a widget can render text
     perfectly onto a region another widget is sitting on top of."""
     return [strip.text.rstrip() for strip in app.screen._compositor.render_strips()]
 
 
-def _rendered(app: DashboardApp) -> str:
+def _rendered(app: App[None]) -> str:
     return "\n".join(_screen(app))
 
 
-def _status(app: DashboardApp) -> str:
+def _status(app: App[None]) -> str:
     return _screen(app)[-2]
 
 
@@ -178,18 +122,24 @@ async def _until(pilot: Pilot[None], ready: Callable[[], bool], what: str) -> No
 
 
 async def _settle(app: DashboardApp, pilot: Pilot[None], count: int) -> None:
-    await _until(pilot, lambda: len(app._rows) == count, f"showed {count} rows")
+    await _shown(app.dashboard, pilot, count)
+
+
+async def _shown(screen: DashboardScreen, pilot: Pilot[None], count: int) -> None:
+    await _until(pilot, lambda: len(screen._rows) == count, f"showed {count} rows")
 
 
 async def _ended(app: DashboardApp, pilot: Pilot[None]) -> None:
-    await _until(pilot, lambda: app._banner is not None, "reported its run ending")
+    await _until(
+        pilot, lambda: app.dashboard._banner is not None, "reported its run ending"
+    )
 
 
-async def _said(app: DashboardApp, pilot: Pilot[None], message: str) -> None:
+async def _said(app: App[None], pilot: Pilot[None], message: str) -> None:
     await _until(pilot, lambda: message in _status(app), f"said {message!r}")
 
 
-def _table(app: DashboardApp) -> str:
+def _table(app: App[None]) -> str:
     """The rows alone: the status line names issues too."""
     return "\n".join(_screen(app)[:-2])
 
@@ -330,7 +280,7 @@ class TestDashboard:
     def test_the_footer_names_the_enter_key_debug(self) -> None:
         keyed = [
             binding
-            for binding in DashboardApp.BINDINGS
+            for binding in DashboardScreen.BINDINGS
             if isinstance(binding, Binding) and binding.key == "enter"
         ]
 
@@ -394,7 +344,7 @@ class TestDashboard:
         ) -> CompletedProcess[bytes]:
             raise AssertionError(f"attached to a slotless issue: {command}")
 
-        monkeypatch.setattr("batch.tui.app.subprocess.run", unreached)
+        monkeypatch.setattr("batch.tui.screen.subprocess.run", unreached)
 
         async with app.run_test() as pilot:
             await _settle(app, pilot, 1)
@@ -416,7 +366,7 @@ class TestDashboard:
         ) -> CompletedProcess[bytes]:
             raise FileNotFoundError(command)
 
-        monkeypatch.setattr("batch.tui.app.subprocess.run", absent)
+        monkeypatch.setattr("batch.tui.screen.subprocess.run", absent)
         trace = _trace(monkeypatch)
 
         async with app.run_test() as pilot:
@@ -444,30 +394,6 @@ class TestDashboard:
 
             assert app.is_running
             driver.released.set()
-
-
-class FakeVerbs:
-    def __init__(self, refusal: RecoveryRefusal | None = None) -> None:
-        self.refusal: RecoveryRefusal | None = refusal
-        self.calls: list[tuple[str, int]] = []
-
-    def _result(self, action: RecoveryAction, issue: int) -> RecoveryResult:
-        self.calls.append((action, issue))
-        return RecoveryResult(
-            number=issue,
-            action=action,
-            found=BatchLabel.STUCK,
-            refusal=self.refusal,
-        )
-
-    def rework(self, issue: int) -> RecoveryResult:
-        return self._result(RecoveryAction.REWORK, issue)
-
-    def skip(self, issue: int) -> RecoveryResult:
-        return self._result(RecoveryAction.SKIP, issue)
-
-    def relaunch(self, issue: int) -> RecoveryResult:
-        return self._result(RecoveryAction.RELAUNCH, issue)
 
 
 class TestVerbs:
@@ -677,8 +603,8 @@ class TestVerbs:
             await _settle(app, pilot, 1)
             driver.released.set()
 
-        app._tick()
-        app.status("still here")
+        app.dashboard._tick()
+        app.dashboard.status("still here")
 
     @pytest.mark.asyncio
     async def test_a_crashed_run_is_reported_and_still_raised_on_quit(self) -> None:
@@ -814,7 +740,7 @@ class TestKeyHandlersNeverCrash:
         ) -> CompletedProcess[bytes]:
             raise PermissionError(command)
 
-        monkeypatch.setattr("batch.tui.app.subprocess.run", denied)
+        monkeypatch.setattr("batch.tui.screen.subprocess.run", denied)
         trace = _trace(monkeypatch)
 
         async with app.run_test() as pilot:
@@ -825,3 +751,83 @@ class TestKeyHandlersNeverCrash:
             assert app.is_running
             assert trace == ["enter", "exit", "status"]
             driver.released.set()
+
+
+RUN = "run"
+
+
+class _Host(App[None]):
+    """A bare app standing in for orbit: it installs the screen and pushes it."""
+
+    def __init__(self, screen: DashboardScreen) -> None:
+        super().__init__()
+        self.dashboard: DashboardScreen = screen
+
+    def on_mount(self) -> None:
+        self.dashboard.install_on(self, RUN)
+        self.push_screen(RUN)
+
+
+class TestHostedScreen:
+    @pytest.mark.asyncio
+    async def test_rows_status_keys_and_verbs_work_under_another_app(self) -> None:
+        driver = FakeDriver(_row(10), _row(11, BatchLabel.STUCK))
+        verbs = FakeVerbs()
+        screen = DashboardScreen(
+            (EPIC,), driver, prog=_PROG, verbs=verbs, interval=0.05, fetch_interval=0.05
+        )
+        app = _Host(screen)
+
+        async with app.run_test() as pilot:
+            await _shown(screen, pilot, 2)
+            assert "#10" in _table(app)
+            await pilot.press("j")
+            assert "▶ #11" in _rendered(app)
+            await pilot.press("k")
+            assert "▶ #10" in _rendered(app)
+            await pilot.press("j")
+            await pilot.press("s")
+
+            assert verbs.calls == [(RecoveryAction.SKIP, 11)]
+            await _said(app, pilot, "#11 skipped (was stuck)")
+            driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_an_installed_screen_keeps_its_state_across_a_pop(self) -> None:
+        driver = FakeDriver(_row(10), _row(11))
+        narration = ["#10 issue-10 on main"]
+        screen = DashboardScreen(
+            (EPIC,), driver, prog=_PROG, narration=narration, interval=0.05
+        )
+        app = _Host(screen)
+
+        async with app.run_test() as pilot:
+            await _shown(screen, pilot, 2)
+            await pilot.press("j")
+            await _said(app, pilot, "#10 issue-10 on main")
+            await pilot.press("escape")
+            await pilot.pause(0.1)
+            assert app.screen is not screen
+            assert screen.live
+
+            app.push_screen(RUN)
+            await pilot.pause(0.1)
+
+            assert app.screen is screen
+            assert "▶ #11" in _rendered(app)
+            assert "#10 issue-10 on main" in _status(app)
+            assert driver.runs == 1
+            driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_q_on_the_base_screen_quits_the_app(self) -> None:
+        driver = FakeDriver(_row(10))
+        app = _app(driver)
+
+        async with app.run_test() as pilot:
+            await _settle(app, pilot, 1)
+            await pilot.press("escape")
+            await pilot.pause(0.1)
+
+            assert not app.is_running
+        driver.released.set()

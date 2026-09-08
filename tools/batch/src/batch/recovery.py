@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Protocol
 
 from batch.models import (
-    BatchLabel,
     LabelState,
     RecoveryAction,
     RecoveryRefusal,
     RecoveryResult,
     VmStatus,
 )
+from ghgql.labels import BatchLabel
 
 SKIPPABLE = frozenset(
     {BatchLabel.QUEUED, BatchLabel.PLANNED, BatchLabel.STUCK, BatchLabel.IMPLEMENTING}

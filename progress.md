@@ -520,6 +520,248 @@ portability guard sweeps untracked files too, so never let the extraction
 repo's name back into `.claude/` — that is why the guidance file names no
 source for what it was adapted from.
 
+## 2026-09-07 — issue #39 shared BatchLabel + orbit glyph column
+
+https://github.com/ginabythebay/orbatch/issues/39
+
+Decisions:
+- `packages/ghgql/src/ghgql/labels.py` holds `BatchLabel`, `batch_labels`,
+  `glyph`, and the two sentinels `NO_LABEL = " "` / `CONFLICT = "!"`. Full
+  move out of `batch.models`, no re-export shim — every batch import now
+  reads `from ghgql.labels import BatchLabel`. `ConflictingLabelsError`
+  stayed in `batch.models`; `state._batch_labels` is a one-line delegation.
+- `Palette` moved to `orbit/palette.py` and gained `WARNING`, plus
+  `glyph_span(labels) -> (mark, style)`. Both renderers call it, so the
+  CLI/TUI agreement of test-plan item 14 is structural, not just asserted.
+- Glyph is its own cell: `issue_text` appends `mark` then `" #{number}"`;
+  `text_output` adds a `width=1` first column to the issue, epic and
+  sub-issue tables. `filtered_text` / FilteredRun rows emit the blank one
+  so runs stay aligned.
+- Queries widened as the issue's planning note says: `_LIST_EPICS_QUERY`,
+  `_SUB_ISSUES_QUERY`, `_SEARCH_ISSUES_QUERY`. All four orbit label fetches
+  now ask for `first: 100`, matching batch (round 2 finding).
+- `tui_test._label` strips the blank glyph column so the existing structural
+  assertions stay readable; `TestBatchGlyphsReachEverySurface` uses its own
+  labelled fixtures rather than mutating the shared ones (which ~20 tests
+  assert on verbatim).
+- Help legend gained a `batch state` section built from `BatchLabel` +
+  `glyph_span`, so the letters and the WARNING styling are documented in
+  app and cannot drift.
+
+Files: packages/ghgql/src/ghgql/labels.py + tests/labels_test.py (new),
+tools/orbit/src/orbit/{palette.py (new),text_output.py,tree.py,
+github/{client,models}.py,tui/{widgets,screens}.py}, orbit tests
+{widgets_test.py (new),client,text_output,tree,tui,cli}_test.py,
+tools/batch/** (import move only, plus state.py delegation),
+README.md, CLAUDE.md.
+
+Review: two rounds, eleven findings, all fixed. Round 1 found a real bug —
+the move-to-epic picker was the one `issue_text` call site left unlabelled —
+plus four untested wirings, the undocumented legend, and a docstring that
+restated its signature. Round 2 found that the three widened queries were
+pinned only by fake payloads (FakeTransport ignores the query text), the
+20-vs-100 label page size disagreement with batch, and that round 1's
+`patch.object` delegation test mirrored the diff; replaced with a semantic
+assertion on a mixed tuple.
+
+Notes for next iteration: `#32` and `#34` remain the open follow-ups.
+`print_parent_issue` (`orbit parent`) is the one listing with no glyph
+column — single row, nothing to align against. A batch label past the
+100th on an issue still renders blank.
+
+## 2026-09-07 — issue #40 dired-style marks in the orbit TUI
+
+https://github.com/ginabythebay/orbatch/issues/40
+
+Decisions:
+- `orbit/marks.py` holds `Marks` (`toggle`/`unmark`/`clear`/`count`/
+  `__contains__` over a `set[int]`). One instance on the app, injected
+  into `IssueTree` and both `IssueList`s, so marks outlive `r` and
+  `e`/`c`/`b`. `U` clears globally.
+- `issue_text(..., marked=)` prepends a `MARK = "*"` column (Palette.KEY)
+  ahead of the batch glyph; `filtered_text` reserves both columns blank.
+  Every existing prefix assertion moved one column right (`_label` in
+  tui_test strips three chars now; help legend `index("#") == 3`).
+- `space` is bound on BOTH `OrbitApp.BINDINGS` and `IssueTree.BINDINGS`
+  as `app.mark_toggle`. Textual's `Tree` binds space to `toggle_node`
+  and the focused widget wins; the `app.` prefix is what routes it up —
+  a bare name shadows and fires nothing. The app binding must stay
+  because `reserved_keys()` reads only the app's list. Verified red by
+  removing the widget binding.
+- Targeted re-render: `IssueNodeData` now carries `labels`/`open_count`/
+  `total_count` and a `label(marked)` method, so `TreeNode.set_label`
+  rebuilds a row without a fetch. `IssueList` keeps `{number: Issue}`
+  and uses `replace_option_prompt_at_index`, walking the visible options
+  (closed issues hidden by `f` have no option — walking `_issues`
+  crashed on `U`, review round 1).
+- Mark changes re-render EVERY view widget, not just the visible one:
+  `g` can show the tree again via `_land_on`/`reveal` without a reload,
+  which left a stale `*` (review round 1).
+- `IssueList.advance()` is a no-wrap cursor-down; `OptionList.
+  action_cursor_down` wraps, which would run marks in a circle. Tree's
+  `action_cursor_down` already clamps.
+- Status bar gained a `#mark-count` Static ("N marked", blank at 0);
+  the load message keeps overwriting `#status-message`, so a separate
+  cell is what survives a refresh.
+- Placeholder rows: `selected_issue_number` is already None there, so
+  `space` marks nothing and still advances.
+- `mark_toggle`/`unmark`/`unmark_all` are in `_MAIN_SCREEN_ACTIONS`.
+
+Files: tools/orbit/src/orbit/marks.py (new),
+tools/orbit/src/orbit/tui/{app,widgets,screens}.py,
+tools/orbit/tests/{marks_test.py (new),widgets_test.py,tui_test.py},
+tools/orbit/docs/tui-design.md.
+
+Review: two rounds, twelve findings, all fixed. Round 1: two real bugs
+(the `U` crash with hidden closed rows in a list; stale glyphs after
+`g`), three coverage gaps (u/U in a list, modal blocking, advance over
+a placeholder), four signature-restating docstrings, this entry. Round
+2: `IssueTree.refresh_mark` went through `_find_node` and relabelled
+only the first node for a number — an epic that is also a sub-issue
+has two rows; now walks every match. Plus the untested space-in-list ->
+`g` path, a test name still calling the batch glyph "first column", and
+two stale lines in tui-design.md. Round 1's raw per-lens output was
+lost with a session restart; the PR body carries its merged findings
+and round 2 in full.
+
+Session note: base changed mid-task from `origin/issue-39` to
+`origin/main` (PR `#43` merged). SSH to GitHub has no key in this
+environment — fetch/push over https works via the gh token.
+
+Notes for next iteration: `#32` and `#34` remain open. The batch-verb
+follow-up reads `OrbitApp._marks`; epics are marked by their own
+number only (batch expands them). A widget other than the tree that
+ever binds `u`/`U` itself needs the same `app.` shadow trick.
+
+## 2026-09-08 — issue #41 batch verb menu + in-process run screen in orbit
+
+https://github.com/ginabythebay/orbatch/issues/41
+
+Decisions:
+- `batch/runtime.py`: `Runtime(repo, config, run_root)` + `Runtime.load(repo)`
+  (scopes the run root by slug, `.expanduser()` like the CLI). Holds
+  `state/stack/runner/orchestrator/teardown/reclaimer/verbs/recovery`, the
+  thin `queue/unqueue/approve/fast_track(targets)` wrappers, `drive(targets,
+  report) -> Drive(orchestrator, verbs, run)`, `plan_session(...) ->
+  PlanOutcome(command, returncode, refusal)`, and the moved `watch` +
+  `_QuietRepeats`. `prog` is an attribute (Protocol member), not a property.
+- CLI keeps its lazy `_runner`/`_resolve_state`/`_resolve_recovery` for the
+  commands that must work without `batch.toml` (attach, vm *, skip,
+  relaunch, queue…); `run/plan/cleanup/gc/rework/debug` go through
+  `_runtime(ctx, root)`. Injected `ctx.obj` short-circuits unchanged.
+  `plan` passes the CLI's own `_spawn` so a missing vibe is still a
+  ClickException; `StaleSlotError` formatted in the CLI, so orbit's status
+  line lacks the `gc` remedy for that one case.
+- `Driving`/`Keying` protocols moved to `batch/dashboard.py` so runtime never
+  imports the TUI. `FakeDriver`/`FakeVerbs` moved to
+  `batch/testing/driving.py` (orbit's tests use them).
+- `batch/tui/screen.py::DashboardScreen` is the whole dashboard;
+  `DashboardApp` is a host via `get_default_screen`. `q`/`escape` →
+  `action_close_screen`: pop when stack > 1, else `app.exit()`. Textual's
+  `install_screen`/`uninstall_screen` stubs are `Screen[Unknown]` → typed
+  through `install_on`/`uninstall_from` (cast on the attribute access, which
+  is what silences reportUnknownMemberType; a cast around the call does not).
+  `uninstall_from` also `remove()`s: uninstalling alone leaves the screen
+  mounted with its 2s/30s timers polling GitHub (review round 1).
+  `RunChanged` message from `_drive` and from `_tick` when the banner lands;
+  timers keep ticking on a suspended screen, verified in textual 8.2.8.
+- orbit: `Marks` is dict-backed now, `numbers` = marking order.
+  `orbit/batching.py`: `Batching` Protocol (attrs `run_root`, `prog`;
+  queue/unqueue/approve/fast_track/plan_session/drive), `BatchVerb` StrEnum,
+  `load_batching(repo)` → None on ConfigError/CalledProcessError/OSError.
+  `run_tui` loads it and prints the in-flight line after `app.run()` when
+  `app.run_live`.
+- `!` = Textual key `exclamation_mark`; `reserved_keys()` now also includes
+  `key_display` so `"!"` is reserved. `d` returns to the run screen.
+- Run: probe `run_lock` on the loop (held elsewhere → status, no screen),
+  then the daemon thread's `drive` holds `run_lock` + `awake` for exactly the
+  thread's life, so the lock releases on finish and re-acquires on a
+  relaunch from the screen. Second `run` while live → status + switch.
+  Finished screen is uninstalled+removed and replaced.
+- `check_action`: run screen on top → only `show_epics/sprint/backlog`, each
+  pops it first. Screen's own f/s/r shadow orbit's.
+- Verb guards order: not-configured first, then "Nothing to <verb>". Every
+  verb (plan/run included) clears marks + refreshes; a raising verb only
+  reports (marks kept for retry).
+- Status-bar wording = CLI wording via `text_output.queue_lines/approve_lines`
+  → `VerbLines(said, warned).line` joined with "; ".
+
+Files: tools/batch/src/batch/{runtime.py (new),cli.py,dashboard.py,
+text_output.py,tui/{app.py,screen.py (new)},testing/{payloads.py,
+driving.py (new)}}, tools/batch/tests/{runtime_test.py (new),cli_test.py,
+tui_test.py,text_output_test.py,orchestrator_test.py},
+tools/orbit/{pyproject.toml,src/orbit/{batching.py (new),marks.py,
+tui/{app,screens,widgets}.py},tests/{batching_test.py (new),marks_test.py,
+tui_test.py},docs/tui-design.md}, uv.lock.
+
+Review: two rounds, eleven findings, all fixed. Round 1: unmounted replaced
+screen (real bug — `uninstall_screen` leaves timers polling GitHub);
+unguarded `run` failure path; two vacuous assertions; `load_batching`
+untested and missing OSError; stale doc snippet. Round 2: `plan` let
+`CalledProcessError` escape (StackManager runs git check=True) — now
+`_VERB_FAILURES` on all three paths; `Runtime.drive` + the four label
+wrappers untested; vacuous run-clears-marks assertion; `d` with no run
+untested; orbit tests touched `$HOME` — orbit now has batch's `bogus_home`
+conftest plus `GIT_CONFIG_GLOBAL/SYSTEM`. Round-2 fixes not re-reviewed.
+
+Session notes: SSH to GitHub has no key here; fetch/push via
+`git -c credential.helper='!gh auth git-credential' <verb> https://github.com/ginabythebay/orbatch.git …`.
+Base moved mid-task from `origin/issue-40` to `origin/main` (PR `#49`
+merged). `git checkout <file>` restores the INDEX — it silently dropped an
+unstaged fix once; stage before mutation-testing.
+
+Notes for next iteration: `#32`, `#34` open. Nothing verified against a
+real VM boot or live GitHub. `Runtime.drive` builds the client on the event
+loop (one `git remote get-url`). Orbit's `plan` uses `batch plan` defaults
+(no model/ram). `#36`'s open-issue-from-run-row stories are follow-ups on
+`DashboardScreen`.
+
+## 2026-09-08 — issue #42 share issue label/body mutations through ghgql
+
+https://github.com/ginabythebay/orbatch/issues/42
+
+Decisions:
+- `packages/ghgql/src/ghgql/issues.py`: `IssueMutations(graphql, repo)` +
+  `LabelNode`/`LabelConnection`/`IssueCore`. `ghgql` gains a `pydantic` dep.
+  Both clients hold one `IssueMutations` and delegate; public signatures
+  unchanged, so `batch/state.py`, orbit's orchestrators and every
+  `patch.object` call site are untouched.
+- `label_ids(names)` builds one aliased query (`l0..lN`, positional because
+  `ready-for-review` is not a valid GraphQL alias), reports every missing
+  name in one `RuntimeError` ("Labels not found in repo: a, b"), and returns
+  `{}` for no names without a query (an empty selection set is invalid GraphQL).
+- `label_id(name, group=())` fills a per-instance cache. Ordering is
+  **group first, then name** (`dict.fromkeys((*group, name))`) — with name
+  first, `payloads.label_ids()`'s positional aliases would shift with whichever
+  label was asked for. Batch passes `tuple(BatchLabel)`, keeping its one round
+  trip; orbit's `fetch_label_id` passes no group and thereby gains the cache
+  and batch's wording (nothing pinned the old `Label 'x' not found`).
+- `_ChildNode(IssueCore)` in batch, `_IssueDetailRaw(IssueCore)` in orbit;
+  orbit's `_LabelName`/`_LabelNodes` and its duplicate `_LabelNode`/
+  `_LabelConnection` fold into the shared pair.
+- `payloads.label_ids()` now emits `l0..l4` in `BatchLabel` order and ids
+  `LA_<label name>`. Two pinned id literals changed (`LA_readyForReview` ->
+  `LA_ready-for-review`) in state_test and recovery_test; no fixture call
+  site changed.
+
+Files: packages/ghgql/{pyproject.toml,src/ghgql/issues.py (new),
+tests/issues_test.py (new)}, tools/batch/src/batch/{github/client.py,
+testing/payloads.py}, tools/batch/tests/{client,state,recovery}_test.py,
+tools/orbit/src/orbit/github/client.py, tools/orbit/tests/client_test.py,
+README.md, CLAUDE.md, uv.lock.
+
+Review: two findings. Fixed: the generated label query text was asserted
+nowhere (only variables), so a broken interpolation stayed green — the test
+now pins `$lN: String!` and `lN: label(name: $lN)`. Partly declined: the
+reviewer would delete `TestIssueCore` as a diff mirror; kept (test-plan item
+6, and the only direct exercise of the alias-carrying extension) but its
+fixture's `closed_by` no longer masquerades as a `LabelConnection`.
+
+Notes for next iteration: `#32`, `#34` remain open. `IssueMutations` owns
+the label cache, so a client instance never sees a label renamed mid-run.
+`fetch_targets`, orbit's milestone/period/sub-issue queries stay in their own
+clients on purpose — the audit in `#42` found no other overlap.
+
 ## 2026-09-08 — issue #45 orbit TUI hides closed issues by default
 
 https://github.com/ginabythebay/orbatch/issues/45
@@ -562,6 +804,14 @@ and pins each list's option ids (`[None, "41"]`). Verified red by flipping
 the default back. Correctness lens: no findings. The tests lens and the
 consolidation step both failed with empty stderr, so there was no merged
 `## Findings` list this round.
+
+Merge with origin/main (`#39`/`#40`/`#41`/`#42` landed meanwhile) needed the
+same audit again for `TestMarks`: three mark tests assumed the unfiltered
+tree and gained a leading `f`, two that pressed `f` to reach a placeholder row
+dropped it, and `test_marks_survive_a_refresh` now compares
+`mock_epics.call_count` against a count taken just before `r` — the toggle
+itself refetches, so a literal `== 2` was default-dependent. `_section_labels`
+routes through the new `_label` helper so the glyph column is stripped.
 
 Notes for next iteration: `#32` and `#34` remain the open follow-ups. If the
 tests lens keeps failing with empty stderr, that is worth its own issue — it

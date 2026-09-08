@@ -91,7 +91,9 @@ A uv workspace of seven packages:
   (`review-diff`, `review-html`)
 - `tools/snippets` — per-epic activity and accomplishment rollups
   (`snippets`)
-- `packages/ghgql` — shared GitHub GraphQL transport and repo detection
+- `packages/ghgql` — shared GitHub GraphQL transport, repo detection,
+  the issue label and body mutations both clients delegate to, and the
+  batch-label vocabulary both `batch` and `orbit` read
 - `packages/portability` — digests of the repositories orbatch was
   extracted from, and the workspace-wide guard that keeps them out
 - `packages/shellcomp` — shared click shell-completion helper

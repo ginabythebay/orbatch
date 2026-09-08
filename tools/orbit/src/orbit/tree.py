@@ -14,6 +14,7 @@ class TreeNode(BaseModel, frozen=True):
     open_count: int | None
     total_count: int | None
     children: tuple[TreeItem, ...]
+    labels: tuple[str, ...] = ()
 
 
 class FilteredRun(BaseModel, frozen=True):
@@ -95,6 +96,7 @@ def _build_node(data: SubIssueData, node_filter: _FilterType) -> TreeNode:
         number=data.number,
         state=data.state,
         title=data.title,
+        labels=data.labels,
         open_count=open_count,
         total_count=total_count,
         children=children,

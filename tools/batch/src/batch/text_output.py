@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import TextIO
 
 from rich.console import Console, Group, RenderableType
@@ -9,28 +10,32 @@ from rich.table import Table
 from rich.text import Text
 
 from batch.models import (
+    ApproveResult,
     Batch,
-    BatchLabel,
     CiStatus,
     DashboardRow,
     DebugEntry,
     DebugRefusal,
     DroppedChild,
+    Epic,
     NextIssue,
     PlanRefusal,
     PlanWritten,
     Problem,
+    QueueResult,
     ReclaimOutcome,
     ReclaimResult,
     RecoveryAction,
     RecoveryRefusal,
     RecoveryResult,
     RunResult,
+    SkippedIssue,
     TeardownOutcome,
     TeardownResult,
     Verdict,
     VmFacts,
 )
+from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
 
 _STATE_STYLES = {
@@ -198,6 +203,64 @@ def print_batch_table(
 
 def targets_line(targets: Sequence[int]) -> str:
     return ", ".join(f"#{number}" for number in targets)
+
+
+@dataclass(frozen=True)
+class VerbLines:
+    """What a labelling verb has to say: `said` is its result, `warned` what it
+    passed over. The CLI writes the two to different streams; a status bar
+    joins them into `line`."""
+
+    said: tuple[str, ...]
+    warned: tuple[str, ...] = ()
+
+    @property
+    def line(self) -> str:
+        return "; ".join((*self.said, *self.warned))
+
+
+def _epic_lines(epic: Epic | None) -> tuple[str, ...]:
+    return () if epic is None else (f"Epic #{epic.number} {epic.title}",)
+
+
+def _skipped_lines(skipped: Sequence[SkippedIssue]) -> Iterator[str]:
+    closed = 0
+    for item in skipped:
+        if item.reason == "closed":
+            closed += 1
+        else:
+            yield f"Skipped #{item.number} ({item.reason})"
+    if closed:
+        plural = "issue" if closed == 1 else "issues"
+        yield f"Skipped {closed} closed {plural}."
+
+
+def queue_lines(done: str, todo: str, result: QueueResult) -> VerbLines:
+    outcome = (
+        f"{done} {targets_line(result.labeled)}"
+        if result.labeled
+        else f"Nothing to {todo}."
+    )
+    return VerbLines(
+        said=(*_epic_lines(result.epic), outcome),
+        warned=tuple(_skipped_lines(result.skipped)),
+    )
+
+
+def approve_lines(result: ApproveResult) -> VerbLines:
+    outcome = (
+        f"Approved {targets_line(result.approved)}"
+        if result.approved
+        else "Nothing to approve."
+    )
+    refused = (
+        f"#{number} already has a Test Plan; guidance not written"
+        for number in result.guidance_refused
+    )
+    return VerbLines(
+        said=(*_epic_lines(result.epic), outcome),
+        warned=(*_skipped_lines(result.skipped), *refused),
+    )
 
 
 def _bases(bases: tuple[str, ...]) -> str:

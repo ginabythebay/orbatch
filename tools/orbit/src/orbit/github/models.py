@@ -26,6 +26,7 @@ class Issue(BaseModel, frozen=True):
     number: int
     state: str
     title: str
+    labels: tuple[str, ...] = ()
 
 
 class MilestoneIssue(Issue, frozen=True):
@@ -115,6 +116,7 @@ class SubIssueData(BaseModel, frozen=True):
     state: str
     title: str
     children: tuple[SubIssueData, ...]
+    labels: tuple[str, ...] = ()
 
 
 class CreatedIssue(BaseModel, frozen=True):
@@ -157,6 +159,7 @@ class Epic(BaseModel, frozen=True):
     title: str
     open_count: int
     total_count: int
+    labels: tuple[str, ...] = ()
 
 
 class MilestoneSummary(BaseModel, frozen=True):

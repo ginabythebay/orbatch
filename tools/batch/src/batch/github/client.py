@@ -6,8 +6,10 @@ from typing import ClassVar
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from batch.body import closing_references
-from batch.models import BatchLabel, ChildIssue, CiStatus, PullRequest, Target
+from batch.models import ChildIssue, CiStatus, PullRequest, Target
 from ghgql.errors import IssueNotFoundError
+from ghgql.issues import IssueCore, IssueMutations
+from ghgql.labels import BatchLabel
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL, RateLimit
 
@@ -23,44 +25,6 @@ query($owner: String!, $name: String!, $number: Int!) {
       labels(first: 100) { nodes { name } }
       closedByPullRequestsReferences(first: 100) { nodes { merged } }
     }
-  }
-}
-"""
-
-_LABEL_IDS_QUERY = """
-query($owner: String!, $name: String!) {
-  repository(owner: $owner, name: $name) {
-    queued: label(name: "queued") { id }
-    planned: label(name: "planned") { id }
-    implementing: label(name: "implementing") { id }
-    readyForReview: label(name: "ready-for-review") { id }
-    stuck: label(name: "stuck") { id }
-  }
-}
-"""
-
-_ADD_LABEL_MUTATION = """
-mutation($labelableId: ID!, $labelId: ID!) {
-  addLabelsToLabelable(input: {labelableId: $labelableId, labelIds: [$labelId]}) {
-    clientMutationId
-  }
-}
-"""
-
-_REMOVE_LABEL_MUTATION = """
-mutation($labelableId: ID!, $labelId: ID!) {
-  removeLabelsFromLabelable(
-    input: {labelableId: $labelableId, labelIds: [$labelId]}
-  ) {
-    clientMutationId
-  }
-}
-"""
-
-_SET_BODY_MUTATION = """
-mutation($issueId: ID!, $body: String!) {
-  updateIssue(input: {id: $issueId, body: $body}) {
-    clientMutationId
   }
 }
 """
@@ -130,14 +94,6 @@ _ROLLUP_STATES = {
 }
 
 
-class _LabelNode(BaseModel):
-    name: str
-
-
-class _LabelConnection(BaseModel):
-    nodes: list[_LabelNode]
-
-
 class _ClosingPullRequestNode(BaseModel):
     merged: bool
 
@@ -146,14 +102,8 @@ class _ClosingPullRequestConnection(BaseModel):
     nodes: list[_ClosingPullRequestNode]
 
 
-class _ChildNode(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(populate_by_name=True)
-    id: str
-    number: int
-    state: str
-    title: str
+class _ChildNode(IssueCore):
     body: str
-    labels: _LabelConnection
     closed_by: _ClosingPullRequestConnection = Field(
         alias="closedByPullRequestsReferences"
     )
@@ -184,23 +134,6 @@ class _TargetsRepo(RootModel[dict[str, _TargetNode | None]]):
 
 class _TargetsResponseData(BaseModel):
     repository: _TargetsRepo
-
-
-class _LabelIdNode(BaseModel):
-    id: str
-
-
-class _LabelIdRepo(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(populate_by_name=True)
-    queued: _LabelIdNode | None = None
-    planned: _LabelIdNode | None = None
-    implementing: _LabelIdNode | None = None
-    ready_for_review: _LabelIdNode | None = Field(default=None, alias="readyForReview")
-    stuck: _LabelIdNode | None = None
-
-
-class _LabelIdResponseData(BaseModel):
-    repository: _LabelIdRepo
 
 
 class _RollupNode(BaseModel):
@@ -299,7 +232,7 @@ class BatchGitHub:
     def __init__(self, graphql: GitHubGraphQL, repo: Repo) -> None:
         self._graphql: GitHubGraphQL = graphql
         self.repo: Repo = repo
-        self._label_ids: dict[BatchLabel, str] = {}
+        self._issues: IssueMutations = IssueMutations(graphql, repo)
 
     @property
     def rate_limit(self) -> RateLimit | None:
@@ -316,41 +249,16 @@ class BatchGitHub:
 
     def label_id(self, label: BatchLabel) -> str:
         """The label's node id, fetching all five on first use."""
-        if not self._label_ids:
-            owner, name = self.repo
-            raw = self._graphql.run(_LABEL_IDS_QUERY, owner=owner, name=name)
-            found = _LabelIdResponseData.model_validate(raw).repository
-            nodes = {
-                BatchLabel.QUEUED: found.queued,
-                BatchLabel.PLANNED: found.planned,
-                BatchLabel.IMPLEMENTING: found.implementing,
-                BatchLabel.READY_FOR_REVIEW: found.ready_for_review,
-                BatchLabel.STUCK: found.stuck,
-            }
-            missing = [name for name, node in nodes.items() if node is None]
-            if missing:
-                raise RuntimeError(f"Labels not found in repo: {', '.join(missing)}")
-            self._label_ids = {
-                key: node.id for key, node in nodes.items() if node is not None
-            }
-        return self._label_ids[label]
+        return self._issues.label_id(label, tuple(BatchLabel))
 
     def add_label(self, node_id: str, label: BatchLabel) -> None:
-        self._graphql.run(
-            _ADD_LABEL_MUTATION,
-            labelableId=node_id,
-            labelId=self.label_id(label),
-        )
+        self._issues.add_label(node_id, self.label_id(label))
 
     def remove_label(self, node_id: str, label: BatchLabel) -> None:
-        self._graphql.run(
-            _REMOVE_LABEL_MUTATION,
-            labelableId=node_id,
-            labelId=self.label_id(label),
-        )
+        self._issues.remove_label(node_id, self.label_id(label))
 
     def set_issue_body(self, node_id: str, body: str) -> None:
-        self._graphql.run(_SET_BODY_MUTATION, issueId=node_id, body=body)
+        self._issues.set_issue_body(node_id, body)
 
     def fetch_pull_requests(self, head_ref_name: str) -> list[PullRequest]:
         owner, name = self.repo

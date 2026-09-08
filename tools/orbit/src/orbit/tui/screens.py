@@ -24,10 +24,13 @@ from textual.screen import ModalScreen, Screen, ScreenResultType
 from textual.widgets import Input, Markdown, OptionList, Static
 from textual.widgets.option_list import Option
 
+from ghgql.labels import BatchLabel
+from orbit.batching import BatchVerb
 from orbit.config import CustomCommand
 from orbit.github.client import GitHubClient
 from orbit.github.models import IssueDetail
-from orbit.tui.widgets import Palette, issue_text
+from orbit.palette import Palette, glyph_span
+from orbit.tui.widgets import issue_text
 
 _KEYBINDINGS = [
     ("up/down", "Move cursor"),
@@ -46,6 +49,11 @@ _KEYBINDINGS = [
     ("x", "Close issue"),
     ("t", "Edit issue in browser"),
     ("g", "Go to issue number"),
+    ("!", "Batch verb menu over the marked issues"),
+    ("d", "Back to the batch run screen"),
+    ("space", "Mark issue and advance"),
+    ("u", "Unmark issue"),
+    ("U", "Unmark all (every view)"),
     ("r", "Refresh current view"),
     ("?", "Toggle this help"),
     ("q", "Close (quit on main screen)"),
@@ -86,6 +94,12 @@ class ClosableModalScreen(ModalScreen[ScreenResultType]):
 
     def action_close_screen(self) -> None:
         self.dismiss(None)
+
+
+_GLYPH_LEGEND: tuple[tuple[tuple[str, ...], str], ...] = (
+    *(((label.value,), label.value) for label in BatchLabel),
+    (tuple(BatchLabel)[:2], "more than one batch label"),
+)
 
 
 @final
@@ -140,6 +154,11 @@ class HelpScreen(ClosableModalScreen[None]):
         ):
             text.append_text(sample)
             text.append("\n")
+        text.append("\nbatch state\n\n", Palette.EMPHASIS)
+        for names, description in _GLYPH_LEGEND:
+            text.append(" " * 7)
+            text.append(*glyph_span(names))
+            text.append(f"  {description}\n")
         yield Static(text, id="help-panel")
 
 
@@ -270,7 +289,7 @@ class EpicPickerScreen(ClosableModalScreen[int | None]):
                 continue
             picker.add_option(
                 Option(
-                    issue_text(epic.number, epic.state, epic.title),
+                    issue_text(epic.number, epic.state, epic.title, labels=epic.labels),
                     id=str(epic.number),
                 )
             )
@@ -438,3 +457,35 @@ class MilestonePickerScreen(ClosableModalScreen[str | None]):
         event.stop()
         if event.option.id is not None:
             self.dismiss(event.option.id)
+
+
+@final
+class BatchVerbScreen(ClosableModalScreen[BatchVerb | None]):
+    """Pick a batch verb; dismisses with it, or None when closed."""
+
+    DEFAULT_CSS = """
+    BatchVerbScreen {
+        align: center middle;
+    }
+    BatchVerbScreen #batch-verbs {
+        width: 24;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+    }
+    """
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield OptionList(
+            *(Option(verb.value, id=verb.value) for verb in BatchVerb),
+            id="batch-verbs",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).highlighted = 0
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option.id is not None:
+            self.dismiss(BatchVerb(event.option.id))
