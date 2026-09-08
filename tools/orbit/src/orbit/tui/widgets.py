@@ -243,11 +243,11 @@ class IssueTree(Tree[TreeItemData]):
         Binding("left", "collapse_node", "Collapse", show=False),
     ]
 
-    def __init__(self, *, id: str | None = None) -> None:
+    def __init__(self, *, hide_closed: bool = False, id: str | None = None) -> None:
         super().__init__("Epics", id=id)
         self.show_root = False
         self.auto_expand = False
-        self.hide_closed = False
+        self.hide_closed = hide_closed
         # Restoration state, set by load_epics(restore=...) and consumed
         # incrementally as epics expand and populate. Only epics fetch
         # lazily — whether at the top level or revealed under a run
@@ -677,6 +677,7 @@ class IssueList(OptionList):
         milestone: str,
         item_name: str,
         soon_filterable: bool = False,
+        hide_closed: bool = False,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
@@ -684,7 +685,7 @@ class IssueList(OptionList):
         self.item_name = item_name
         self.soon_filterable = soon_filterable
         self.soon_only = False
-        self.hide_closed = False
+        self.hide_closed = hide_closed
 
     @property
     def label_filter(self) -> str | None:

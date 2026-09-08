@@ -215,8 +215,9 @@ Screens can return values: `EpicPickerScreen` is
 ## State
 
 The app holds two pieces of state: `_view` (an enum: EPICS / SPRINT /
-BACKLOG) and `_hide_closed`, which it fans out to every view widget
-because that filter applies to all of them. Each view is its own
+BACKLOG) and `_hide_closed`, which starts on and which it fans out to
+every view widget — at construction as well as on the toggle — because
+that filter applies to all of them. Each view is its own
 widget — the epics tree plus one `IssueList` per flat view — mirroring
 what the user sees. An `IssueList` carries its view's query
 configuration (milestone, soon filterability) as plain data, and the
