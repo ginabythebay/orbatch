@@ -632,3 +632,86 @@ Notes for next iteration: `#32` and `#34` remain open. The batch-verb
 follow-up reads `OrbitApp._marks`; epics are marked by their own
 number only (batch expands them). A widget other than the tree that
 ever binds `u`/`U` itself needs the same `app.` shadow trick.
+
+## 2026-09-08 — issue #41 batch verb menu + in-process run screen in orbit
+
+https://github.com/ginabythebay/orbatch/issues/41
+
+Decisions:
+- `batch/runtime.py`: `Runtime(repo, config, run_root)` + `Runtime.load(repo)`
+  (scopes the run root by slug, `.expanduser()` like the CLI). Holds
+  `state/stack/runner/orchestrator/teardown/reclaimer/verbs/recovery`, the
+  thin `queue/unqueue/approve/fast_track(targets)` wrappers, `drive(targets,
+  report) -> Drive(orchestrator, verbs, run)`, `plan_session(...) ->
+  PlanOutcome(command, returncode, refusal)`, and the moved `watch` +
+  `_QuietRepeats`. `prog` is an attribute (Protocol member), not a property.
+- CLI keeps its lazy `_runner`/`_resolve_state`/`_resolve_recovery` for the
+  commands that must work without `batch.toml` (attach, vm *, skip,
+  relaunch, queue…); `run/plan/cleanup/gc/rework/debug` go through
+  `_runtime(ctx, root)`. Injected `ctx.obj` short-circuits unchanged.
+  `plan` passes the CLI's own `_spawn` so a missing vibe is still a
+  ClickException; `StaleSlotError` formatted in the CLI, so orbit's status
+  line lacks the `gc` remedy for that one case.
+- `Driving`/`Keying` protocols moved to `batch/dashboard.py` so runtime never
+  imports the TUI. `FakeDriver`/`FakeVerbs` moved to
+  `batch/testing/driving.py` (orbit's tests use them).
+- `batch/tui/screen.py::DashboardScreen` is the whole dashboard;
+  `DashboardApp` is a host via `get_default_screen`. `q`/`escape` →
+  `action_close_screen`: pop when stack > 1, else `app.exit()`. Textual's
+  `install_screen`/`uninstall_screen` stubs are `Screen[Unknown]` → typed
+  through `install_on`/`uninstall_from` (cast on the attribute access, which
+  is what silences reportUnknownMemberType; a cast around the call does not).
+  `uninstall_from` also `remove()`s: uninstalling alone leaves the screen
+  mounted with its 2s/30s timers polling GitHub (review round 1).
+  `RunChanged` message from `_drive` and from `_tick` when the banner lands;
+  timers keep ticking on a suspended screen, verified in textual 8.2.8.
+- orbit: `Marks` is dict-backed now, `numbers` = marking order.
+  `orbit/batching.py`: `Batching` Protocol (attrs `run_root`, `prog`;
+  queue/unqueue/approve/fast_track/plan_session/drive), `BatchVerb` StrEnum,
+  `load_batching(repo)` → None on ConfigError/CalledProcessError/OSError.
+  `run_tui` loads it and prints the in-flight line after `app.run()` when
+  `app.run_live`.
+- `!` = Textual key `exclamation_mark`; `reserved_keys()` now also includes
+  `key_display` so `"!"` is reserved. `d` returns to the run screen.
+- Run: probe `run_lock` on the loop (held elsewhere → status, no screen),
+  then the daemon thread's `drive` holds `run_lock` + `awake` for exactly the
+  thread's life, so the lock releases on finish and re-acquires on a
+  relaunch from the screen. Second `run` while live → status + switch.
+  Finished screen is uninstalled+removed and replaced.
+- `check_action`: run screen on top → only `show_epics/sprint/backlog`, each
+  pops it first. Screen's own f/s/r shadow orbit's.
+- Verb guards order: not-configured first, then "Nothing to <verb>". Every
+  verb (plan/run included) clears marks + refreshes; a raising verb only
+  reports (marks kept for retry).
+- Status-bar wording = CLI wording via `text_output.queue_lines/approve_lines`
+  → `VerbLines(said, warned).line` joined with "; ".
+
+Files: tools/batch/src/batch/{runtime.py (new),cli.py,dashboard.py,
+text_output.py,tui/{app.py,screen.py (new)},testing/{payloads.py,
+driving.py (new)}}, tools/batch/tests/{runtime_test.py (new),cli_test.py,
+tui_test.py,text_output_test.py,orchestrator_test.py},
+tools/orbit/{pyproject.toml,src/orbit/{batching.py (new),marks.py,
+tui/{app,screens,widgets}.py},tests/{batching_test.py (new),marks_test.py,
+tui_test.py},docs/tui-design.md}, uv.lock.
+
+Review: two rounds, eleven findings, all fixed. Round 1: unmounted replaced
+screen (real bug — `uninstall_screen` leaves timers polling GitHub);
+unguarded `run` failure path; two vacuous assertions; `load_batching`
+untested and missing OSError; stale doc snippet. Round 2: `plan` let
+`CalledProcessError` escape (StackManager runs git check=True) — now
+`_VERB_FAILURES` on all three paths; `Runtime.drive` + the four label
+wrappers untested; vacuous run-clears-marks assertion; `d` with no run
+untested; orbit tests touched `$HOME` — orbit now has batch's `bogus_home`
+conftest plus `GIT_CONFIG_GLOBAL/SYSTEM`. Round-2 fixes not re-reviewed.
+
+Session notes: SSH to GitHub has no key here; fetch/push via
+`git -c credential.helper='!gh auth git-credential' <verb> https://github.com/ginabythebay/orbatch.git …`.
+Base moved mid-task from `origin/issue-40` to `origin/main` (PR `#49`
+merged). `git checkout <file>` restores the INDEX — it silently dropped an
+unstaged fix once; stage before mutation-testing.
+
+Notes for next iteration: `#32`, `#34` open. Nothing verified against a
+real VM boot or live GitHub. `Runtime.drive` builds the client on the event
+loop (one `git remote get-url`). Orbit's `plan` uses `batch plan` defaults
+(no model/ram). `#36`'s open-issue-from-run-row stories are follow-ups on
+`DashboardScreen`.
