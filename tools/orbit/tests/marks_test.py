@@ -36,3 +36,14 @@ class TestMarks:
         marks.clear()
         assert marks.count == 0
         assert 2 not in marks
+
+    def test_numbers_come_back_in_marking_order(self) -> None:
+        marks = Marks()
+
+        marks.toggle(30)
+        marks.toggle(10)
+        marks.toggle(20)
+        marks.toggle(10)
+        marks.toggle(10)
+
+        assert marks.numbers == (30, 20, 10)

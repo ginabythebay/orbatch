@@ -810,7 +810,7 @@ class IssueList(OptionList):
 @final
 class StatusBar(Horizontal):
     """One-row bar: last action/load result on the left, then the mark
-    count when any, then the help hint."""
+    count when any, whether a batch run is live, then the help hint."""
 
     DEFAULT_CSS = """
     StatusBar {
@@ -822,7 +822,7 @@ class StatusBar(Horizontal):
         width: 1fr;
         padding: 0 1;
     }
-    StatusBar #mark-count {
+    StatusBar #mark-count, StatusBar #run-state {
         width: auto;
         padding: 0 1;
     }
@@ -837,6 +837,7 @@ class StatusBar(Horizontal):
     def compose(self) -> ComposeResult:
         yield Static("", id="status-message")
         yield Static("", id="mark-count")
+        yield Static("", id="run-state")
         yield Static("? help", id="help-hint")
 
     def set_status(self, message: str) -> None:
@@ -845,4 +846,9 @@ class StatusBar(Horizontal):
     def set_mark_count(self, count: int) -> None:
         self.query_one("#mark-count", Static).update(
             Text(f"{count} marked", Palette.KEY) if count else ""
+        )
+
+    def set_run_live(self, live: bool) -> None:
+        self.query_one("#run-state", Static).update(
+            Text("batch run live", Palette.KEY) if live else ""
         )

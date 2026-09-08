@@ -25,6 +25,7 @@ from textual.widgets import Input, Markdown, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ghgql.labels import BatchLabel
+from orbit.batching import BatchVerb
 from orbit.config import CustomCommand
 from orbit.github.client import GitHubClient
 from orbit.github.models import IssueDetail
@@ -48,6 +49,8 @@ _KEYBINDINGS = [
     ("x", "Close issue"),
     ("t", "Edit issue in browser"),
     ("g", "Go to issue number"),
+    ("!", "Batch verb menu over the marked issues"),
+    ("d", "Back to the batch run screen"),
     ("space", "Mark issue and advance"),
     ("u", "Unmark issue"),
     ("U", "Unmark all (every view)"),
@@ -454,3 +457,35 @@ class MilestonePickerScreen(ClosableModalScreen[str | None]):
         event.stop()
         if event.option.id is not None:
             self.dismiss(event.option.id)
+
+
+@final
+class BatchVerbScreen(ClosableModalScreen[BatchVerb | None]):
+    """Pick a batch verb; dismisses with it, or None when closed."""
+
+    DEFAULT_CSS = """
+    BatchVerbScreen {
+        align: center middle;
+    }
+    BatchVerbScreen #batch-verbs {
+        width: 24;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+    }
+    """
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield OptionList(
+            *(Option(verb.value, id=verb.value) for verb in BatchVerb),
+            id="batch-verbs",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).highlighted = 0
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        if event.option.id is not None:
+            self.dismiss(BatchVerb(event.option.id))

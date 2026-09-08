@@ -5,7 +5,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-from batch.models import Batch, BatchIssue, DashboardRow, VmStatus
+from batch.models import (
+    Batch,
+    BatchIssue,
+    DashboardRow,
+    DebugEntry,
+    RecoveryResult,
+    RunResult,
+    VmStatus,
+)
 
 LINE_LIMIT = 120
 TAIL_BYTES = 8192
@@ -16,6 +24,21 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 class Facts(Protocol):
     def status(self, issue: int) -> VmStatus: ...
     def log(self, issue: int) -> Path: ...
+
+
+class Driving(Protocol):
+    def run(self, targets: Sequence[int]) -> RunResult: ...
+    def fetch(self, targets: Sequence[int]) -> Batch: ...
+    def render(
+        self, batch: Batch, selected: int | None = None
+    ) -> tuple[DashboardRow, ...]: ...
+    def enter(self, issue_number: int) -> DebugEntry: ...
+
+
+class Keying(Protocol):
+    def rework(self, issue: int) -> RecoveryResult: ...
+    def skip(self, issue: int) -> RecoveryResult: ...
+    def relaunch(self, issue: int) -> RecoveryResult: ...
 
 
 class Elapsing(Protocol):

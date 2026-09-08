@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import functools
-import os
 import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
-from time import sleep
 from typing import cast
 
 import click
@@ -28,18 +26,13 @@ from batch.models import (
     AccountCheckError,
     Alignment,
     AlreadyRunningError,
-    ApproveResult,
     Batch,
     EmptyTokenError,
-    Epic,
     KeychainError,
-    QueueResult,
     RecoveryResult,
     RunResult,
-    SkippedIssue,
     Slot,
     StaleSlotError,
-    UnsafeRemovalError,
     VmFacts,
     VmSession,
     VmStatus,
@@ -52,13 +45,15 @@ from batch.orchestrator import (
     Debugger,
     Orchestrator,
 )
-from batch.order import MAIN
 from batch.reclaim import Reclaimer
 from batch.recovery import Recovery
+from batch.runtime import Runtime, watch
 from batch.stack import StackManager, main_repo, worktree_root
 from batch.state import BatchState
 from batch.teardown import Teardown
 from batch.text_output import (
+    VerbLines,
+    approve_lines,
     debug_line,
     print_anomalies,
     print_batch_table,
@@ -69,6 +64,7 @@ from batch.text_output import (
     print_run_result,
     print_teardown_result,
     print_verdict,
+    queue_lines,
     targets_line,
 )
 from batch.tui.app import run_dashboard
@@ -78,13 +74,9 @@ from batch.vm import (
     DEFAULT_RUN_ROOT,
     VmRunner,
     agent_command,
-    plan_batch_command,
-    plan_slot_branch,
     scoped_run_root,
-    session_for,
 )
 from batch.watch import DEFAULT_WATCH_INTERVAL
-from batch.watch import watch as watch_passes
 from batch.worktree import cli as vwt
 from ghgql.repo import repo
 from ghgql.transport import GitHubGraphQL, GitHubTransport
@@ -225,31 +217,11 @@ def _epic_option(f: FC) -> FC:
     )(f)
 
 
-def _echo_epic(epic: Epic | None) -> None:
-    if epic is not None:
-        click.echo(f"Epic #{epic.number} {epic.title}")
-
-
-def _report(done: str, todo: str, result: QueueResult) -> None:
-    _echo_epic(result.epic)
-    if result.labeled:
-        numbers = ", ".join(f"#{number}" for number in result.labeled)
-        click.echo(f"{done} {numbers}")
-    else:
-        click.echo(f"Nothing to {todo}.")
-    _report_skipped(result.skipped)
-
-
-def _report_skipped(skipped: Sequence[SkippedIssue]) -> None:
-    closed = 0
-    for item in skipped:
-        if item.reason == "closed":
-            closed += 1
-        else:
-            click.echo(f"Skipped #{item.number} ({item.reason})", err=True)
-    if closed:
-        plural = "issue" if closed == 1 else "issues"
-        click.echo(f"Skipped {closed} closed {plural}.", err=True)
+def _report(lines: VerbLines) -> None:
+    for line in lines.said:
+        click.echo(line)
+    for line in lines.warned:
+        click.echo(line, err=True)
 
 
 def _vm_facts(batch: Batch, runner: VmRunner) -> dict[int, VmFacts]:
@@ -300,7 +272,7 @@ def status(
 @_pass_state
 def queue(state: BatchState, targets: tuple[int, ...], epic_number: int | None) -> None:
     """Label open unlabeled issues 'queued'."""
-    _report("Queued", "queue", state.queue(epic_number, targets))
+    _report(queue_lines("Queued", "queue", state.queue(epic_number, targets)))
 
 
 def _guidance_option(f: FC) -> FC:
@@ -309,18 +281,6 @@ def _guidance_option(f: FC) -> FC:
         default=None,
         help="Test guidance to write to each approved issue's body.",
     )(f)
-
-
-def _report_approved(result: ApproveResult) -> None:
-    _echo_epic(result.epic)
-    if result.approved:
-        numbers = ", ".join(f"#{number}" for number in result.approved)
-        click.echo(f"Approved {numbers}")
-    else:
-        click.echo("Nothing to approve.")
-    _report_skipped(result.skipped)
-    for number in result.guidance_refused:
-        click.echo(f"#{number} already has a Test Plan; guidance not written", err=True)
 
 
 @cli.command()
@@ -335,7 +295,7 @@ def approve(
     guidance: str | None,
 ) -> None:
     """Move queued issues straight to 'planned'."""
-    _report_approved(state.approve(epic_number, targets, guidance))
+    _report(approve_lines(state.approve(epic_number, targets, guidance)))
 
 
 @cli.command("fast-track")
@@ -350,7 +310,7 @@ def fast_track(
     guidance: str | None,
 ) -> None:
     """Queue and approve in one call: unlabelled issues land on 'planned'."""
-    _report_approved(state.fast_track(epic_number, targets, guidance))
+    _report(approve_lines(state.fast_track(epic_number, targets, guidance)))
 
 
 @cli.group()
@@ -697,6 +657,10 @@ def _interactive() -> bool:
     return sys.stdout.isatty()
 
 
+def _runtime(ctx: click.Context, root: Path) -> Runtime:
+    return Runtime(_main_repo(ctx), _resolve_config(ctx), root)
+
+
 def _resolve_orchestrator(
     ctx: click.Context,
     *,
@@ -710,79 +674,13 @@ def _resolve_orchestrator(
     existing = cast("object", ctx.obj)
     if isinstance(existing, Orchestrator):
         return existing
-    config = _resolve_config(ctx)
-    stack = StackManager(_main_repo(ctx), seed_image=config.seed_image)
-    client = BatchGitHub(GitHubGraphQL(GitHubTransport()), repo())
-    state = BatchState(client)
-    runner = _runner(ctx, root)
-    verifier = Verifier(client)
-    return Orchestrator(
-        state,
-        stack,
-        runner,
-        verifier,
-        Teardown(state, stack, runner, verifier),
-        config=config,
-        report=report,
+    return _runtime(ctx, root).orchestrator(
+        model=model,
         timeout=timeout,
         poll_interval=poll_interval,
         verify_wait=verify_wait,
-        model=model,
+        report=report,
     )
-
-
-class _QuietRepeats:
-    """A sweep re-reports every issue it refused to clean, once per pass."""
-
-    def __init__(self, echo: Callable[[str], None]) -> None:
-        self._echo: Callable[[str], None] = echo
-        self._said: set[str] = set()
-
-    def __call__(self, line: str) -> None:
-        if line in self._said:
-            return
-        self._said.add(line)
-        self._echo(line)
-
-    def reset(self) -> None:
-        self._said.clear()
-
-
-def _watch_passes(
-    orchestrator: Orchestrator,
-    targets: Sequence[int],
-    interval: float,
-    *,
-    prog: str,
-    report: Callable[[str], None],
-    echo: bool = True,
-) -> RunResult:
-    """`echo` is off under the dashboard, which renders the passes itself; the
-    wait goes through `report`, which the dashboard buffers as narration."""
-    original = orchestrator.report
-    quiet = _QuietRepeats(original)
-    orchestrator.report = quiet
-
-    def show(one_pass: RunResult) -> None:
-        quiet.reset()
-        if echo:
-            print_run_result(one_pass, sys.stdout, prog=prog)
-
-    try:
-        return watch_passes(
-            lambda: orchestrator.run(targets),
-            lambda: orchestrator.waiting_targets(targets),
-            sleep=sleep,
-            report=show,
-            announce=lambda pending: report(
-                f"Waiting for queued issues under {targets_line(pending)}."
-            ),
-            interval=interval,
-        )
-    except KeyboardInterrupt:
-        raise SystemExit(130) from None
-    finally:
-        orchestrator.report = original
 
 
 @cli.command()
@@ -870,7 +768,7 @@ def run(
         with run_lock(root), awake(report):
 
             def drive() -> RunResult:
-                return _watch_passes(
+                return watch(
                     orchestrator,
                     targets,
                     watch_interval,
@@ -909,14 +807,7 @@ def _resolve_teardown(ctx: click.Context, root: Path) -> Teardown:
     existing = cast("object", ctx.obj)
     if isinstance(existing, Teardown):
         return existing
-    stack = StackManager(_main_repo(ctx), seed_image=_resolve_config(ctx).seed_image)
-    client = BatchGitHub(GitHubGraphQL(GitHubTransport()), repo())
-    return Teardown(
-        BatchState(client),
-        stack,
-        _runner(ctx, root),
-        Verifier(client),
-    )
+    return _runtime(ctx, root).teardown()
 
 
 @cli.command()
@@ -942,10 +833,7 @@ def _resolve_reclaimer(ctx: click.Context, root: Path) -> Reclaimer:
     existing = cast("object", ctx.obj)
     if isinstance(existing, Reclaimer):
         return existing
-    return Reclaimer(
-        StackManager(_main_repo(ctx), seed_image=_resolve_config(ctx).seed_image),
-        _runner(ctx, root),
-    )
+    return _runtime(ctx, root).reclaimer()
 
 
 @cli.command()
@@ -982,7 +870,7 @@ def unqueue(
     state: BatchState, targets: tuple[int, ...], epic_number: int | None
 ) -> None:
     """Remove 'queued' from issues that still carry it."""
-    _report("Unqueued", "unqueue", state.unqueue(epic_number, targets))
+    _report(queue_lines("Unqueued", "unqueue", state.unqueue(epic_number, targets)))
 
 
 def _resolve_recovery(ctx: click.Context, root: Path) -> Recovery:
@@ -1030,20 +918,7 @@ def _resolve_verbs(
     existing = cast("object", ctx.obj)
     if isinstance(existing, Verbs):
         return existing
-    config = _resolve_config(ctx)
-    stack = StackManager(_main_repo(ctx), seed_image=config.seed_image)
-    client = BatchGitHub(GitHubGraphQL(GitHubTransport()), repo())
-    state = BatchState(client)
-    runner = _runner(ctx, root)
-    return Verbs(
-        targets,
-        state,
-        stack,
-        runner,
-        Recovery(state, runner),
-        config=config,
-        model=model,
-    )
+    return _runtime(ctx, root).verbs(targets, model)
 
 
 @cli.command()
@@ -1098,12 +973,11 @@ def debug(
     dry_run: bool,
 ) -> None:
     """Boot an issue's existing VM in this terminal, resuming the agent's session."""
-    root = _run_root(ctx, run_root)
-    config = _resolve_config(ctx)
+    runtime = _runtime(ctx, _run_root(ctx, run_root))
     debugger = Debugger(
-        StackManager(_main_repo(ctx), seed_image=config.seed_image),
-        _runner(ctx, root),
-        config=config,
+        runtime.stack(),
+        runtime.runner(),
+        config=runtime.config,
         model=model,
         ram=ram,
     )
@@ -1200,15 +1074,6 @@ def agent_plan_written(
         ctx.exit(1)
 
 
-def _reclaim_plan_slot(manager: StackManager, branch: str, prog: str) -> None:
-    """Unforced: a session that committed or left changes in its scratch worktree
-    keeps them, and says where."""
-    try:
-        _ = manager.remove_branch(branch)
-    except UnsafeRemovalError as exc:
-        click.echo(f"{exc}; `{prog} gc` once you are done with it.", err=True)
-
-
 @cli.command()
 @_targets_arg
 @click.option("--model", default=None, help="Model for the planning sessions.")
@@ -1236,32 +1101,20 @@ def plan(
     writes plans to issue bodies over the API and commits nothing, so the slot
     is scratch; `gc` reclaims one a crash left behind.
     """
-    root = _run_root(ctx, run_root)
-    branch = plan_slot_branch(os.getpid())
-    config = _resolve_config(ctx)
-    manager = StackManager(_main_repo(ctx), seed_image=config.seed_image)
-    runner = _runner(ctx, root)
-    config_dir = runner.named_config_dir(branch)
+    runtime = _runtime(ctx, _run_root(ctx, run_root))
     try:
-        slot = manager.ensure_current(branch, MAIN)
+        outcome = runtime.plan_session(
+            targets, model=model, ram=ram, dry_run=dry_run, spawn=_spawn
+        )
     except StaleSlotError as exc:
         raise click.ClickException(
-            f"{exc} — inspect it, then `{config.commands.cli} gc`"
+            f"{exc} — inspect it, then `{runtime.prog} gc`"
         ) from exc
-    try:
-        if not dry_run:
-            runner.write_config(config_dir)
-        session = session_for(
-            slot,
-            mount_root=manager.mount_root,
-            config_dir=config_dir,
-            agent=plan_batch_command(config, targets, model),
-            ram=ram,
-        )
-        _run(ctx, runner.vibe_command(session), dry_run=dry_run, cwd=session.cwd)
-    finally:
-        _ = runner.clean_config(config_dir)
-        _reclaim_plan_slot(manager, branch, config.commands.cli)
+    if dry_run:
+        click.echo(shlex.join(outcome.command))
+    if outcome.refusal is not None:
+        click.echo(outcome.refusal, err=True)
+    ctx.exit(outcome.returncode)
 
 
 # Mounted here rather than declared in `worktree`, which stays free of the

@@ -9,32 +9,39 @@ import pytest
 from rich.console import Console
 
 from batch.models import (
+    ApproveResult,
     Batch,
     BatchIssue,
     CiStatus,
     DashboardRow,
     DroppedChild,
+    Epic,
     HaltReason,
     IssueOutcome,
     NextIssue,
     Problem,
+    QueueResult,
     ReclaimOutcome,
     RecoveryAction,
     RecoveryRefusal,
     RecoveryResult,
     RunResult,
+    SkippedIssue,
     TeardownResult,
     TeardownSkip,
     Verdict,
     VmFacts,
 )
 from batch.text_output import (
+    VerbLines,
+    approve_lines,
     dashboard_view,
     print_batch_table,
     print_next_issue,
     print_run_result,
     print_teardown_result,
     print_verdict,
+    queue_lines,
     reclaim_line,
     recovery_line,
     run_banner,
@@ -720,3 +727,52 @@ class TestReclaimLine:
         outcome = ReclaimOutcome(branch="issue-9", skip=TeardownSkip.OCCUPIED)
 
         assert reclaim_line(outcome, dry_run=False) == "issue-9 left alone (occupied)"
+
+
+class TestVerbLines:
+    def test_a_queue_with_skips_says_what_it_did_then_what_it_skipped(self) -> None:
+        result = QueueResult(
+            labeled=(1, 2),
+            skipped=(
+                SkippedIssue(number=3, reason="already planned"),
+                SkippedIssue(number=4, reason="closed"),
+                SkippedIssue(number=5, reason="closed"),
+            ),
+        )
+
+        assert queue_lines("Queued", "queue", result) == VerbLines(
+            said=("Queued #1, #2",),
+            warned=("Skipped #3 (already planned)", "Skipped 2 closed issues."),
+        )
+
+    def test_an_epic_heads_the_lines_and_nothing_labeled_says_so(self) -> None:
+        result = QueueResult(
+            epic=Epic(number=1492, title="Batch workflow", state="OPEN"),
+            labeled=(),
+            skipped=(SkippedIssue(number=4, reason="closed"),),
+        )
+
+        assert queue_lines("Unqueued", "unqueue", result) == VerbLines(
+            said=("Epic #1492 Batch workflow", "Nothing to unqueue."),
+            warned=("Skipped 1 closed issue.",),
+        )
+
+    def test_an_approve_puts_the_guidance_refusal_last(self) -> None:
+        result = ApproveResult(
+            approved=(1,),
+            skipped=(SkippedIssue(number=2, reason="already implementing"),),
+            guidance_refused=(1,),
+        )
+
+        assert approve_lines(result) == VerbLines(
+            said=("Approved #1",),
+            warned=(
+                "Skipped #2 (already implementing)",
+                "#1 already has a Test Plan; guidance not written",
+            ),
+        )
+
+    def test_the_status_line_joins_every_part(self) -> None:
+        lines = VerbLines(said=("Approved #1",), warned=("Skipped #2 (closed)",))
+
+        assert lines.line == "Approved #1; Skipped #2 (closed)"
