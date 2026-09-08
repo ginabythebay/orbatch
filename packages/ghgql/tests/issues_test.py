@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from ghgql.fake import FakeTransport
-from ghgql.issues import IssueCore, IssueMutations, LabelConnection
+from ghgql.issues import IssueCore, IssueMutations
 from ghgql.repo import Repo
 from ghgql.transport import GitHubGraphQL
 
@@ -31,6 +31,11 @@ class TestLabelIds:
 
         assert found == {"queued": "LA_queued", "stuck": "LA_stuck"}
         assert len(transport.calls) == 1
+        query_text = transport.calls[0].query_text
+        assert "$l0: String!" in query_text
+        assert "$l1: String!" in query_text
+        assert "l0: label(name: $l0)" in query_text
+        assert "l1: label(name: $l1)" in query_text
         assert transport.calls[0].variables == {
             "owner": "example-org",
             "name": "example-repo",
@@ -123,9 +128,17 @@ class TestSetIssueBody:
         assert call.variables == {"issueId": "I_1", "body": "## Test Plan\n"}
 
 
+class _MergedNode(BaseModel):
+    merged: bool
+
+
+class _MergedConnection(BaseModel):
+    nodes: list[_MergedNode]
+
+
 class _WiderNode(IssueCore):
     body: str
-    closed_by: LabelConnection = Field(alias="closedByPullRequestsReferences")
+    closed_by: _MergedConnection = Field(alias="closedByPullRequestsReferences")
 
 
 class TestIssueCore:
@@ -138,7 +151,7 @@ class TestIssueCore:
                 "title": "Fix the widget",
                 "labels": {"nodes": [{"name": "queued"}]},
                 "body": "## Test Plan\n",
-                "closedByPullRequestsReferences": {"nodes": [{"name": "pr"}]},
+                "closedByPullRequestsReferences": {"nodes": [{"merged": True}]},
             }
         )
 
@@ -150,4 +163,4 @@ class TestIssueCore:
         )
         assert [label.name for label in node.labels.nodes] == ["queued"]
         assert node.body == "## Test Plan\n"
-        assert [pr.name for pr in node.closed_by.nodes] == ["pr"]
+        assert [pr.merged for pr in node.closed_by.nodes] == [True]
