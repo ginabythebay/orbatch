@@ -816,6 +816,7 @@ class TestHostedScreen:
             assert app.screen is screen
             assert "▶ #11" in _rendered(app)
             assert "#10 issue-10 on main" in _status(app)
+            assert driver.runs == 1
             driver.released.set()
 
     @pytest.mark.asyncio

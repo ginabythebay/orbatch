@@ -115,8 +115,11 @@ class DashboardScreen(Screen[None]):
         installer(self, name)
 
     def uninstall_from(self, app: App[None]) -> None:
+        """Uninstalling only forgets the name; the mounted screen would keep
+        ticking and polling GitHub for a finished batch, so it goes too."""
         uninstaller = cast("Callable[[Screen[None]], str | None]", app.uninstall_screen)
         _ = uninstaller(self)
+        _ = self.remove()
 
     @property
     def live(self) -> bool:

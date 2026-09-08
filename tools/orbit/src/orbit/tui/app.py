@@ -682,16 +682,19 @@ class OrbitApp(App[None]):
             self._set_status("A batch run is already live")
             self.action_show_run()
             return
+        narration: list[str] = []
         try:
             with run_lock(batching.run_root):
                 pass
+            drive = batching.drive(targets, narration.append)
         except BatchInProgressError as exc:
             self._set_status(str(exc))
             return
+        except (RuntimeError, OSError) as exc:
+            self._set_status(f"Error: {exc}")
+            return
         if self._run_screen is not None:
             self._run_screen.uninstall_from(self)
-        narration: list[str] = []
-        drive = batching.drive(targets, narration.append)
 
         def run() -> RunResult:
             with run_lock(batching.run_root), awake(narration.append):

@@ -46,9 +46,10 @@ import).
 ## Lifecycle
 
 `run_tui(client, config)` → `OrbitApp(client, config.milestones,
-config.commands).run()`, where the `GitHubClient` is built once at the
-CLI entry point by `github_client()` and passed down to the overlay
-screens that fetch. Textual calls `compose()` to build
+config.commands, load_batching()).run()`, where the `GitHubClient` is
+built once at the CLI entry point by `github_client()` and passed down
+to the overlay screens that fetch, and `load_batching()` reads the
+checkout's `batch.toml` there too, so the app never loads a config. Textual calls `compose()` to build
 the widget tree (like initial HTML):
 
 ```python

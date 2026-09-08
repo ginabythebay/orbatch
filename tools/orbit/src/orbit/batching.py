@@ -40,5 +40,5 @@ def load_batching(repo: Path | None = None) -> Batching | None:
     """None when the checkout carries no usable `batch.toml`, or is no checkout."""
     try:
         return Runtime.load(main_repo(repo))
-    except (ConfigError, CalledProcessError):
+    except (ConfigError, CalledProcessError, OSError):
         return None
