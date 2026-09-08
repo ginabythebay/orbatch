@@ -25,9 +25,12 @@ from textual.widgets.tree import TreeNode
 from ghgql.labels import NO_LABEL
 from orbit.filtering import partition_filtered
 from orbit.github.models import Epic, Issue, MilestoneIssue, SubIssueData
+from orbit.marks import Marks
 from orbit.palette import Palette, glyph_span
 from orbit.text_output import filtered_run_label
 from orbit.tree import FilteredRun, TreeItem, build_tree
+
+MARK = "*"
 
 
 def issue_text(
@@ -37,15 +40,18 @@ def issue_text(
     open_count: int | None = None,
     total_count: int | None = None,
     labels: Sequence[str] = (),
+    marked: bool = False,
 ) -> Text:
     """Render an issue as a single styled line.
 
     Closed issues are dimmed green; epic nodes show open/total counts.
-    The leading batch-state glyph is one character wide whether or not
-    the issue carries a batch label, so titles stay aligned.
+    The two leading glyph columns — the mark, then the batch state —
+    are each one character wide whether or not they apply, so titles
+    stay aligned.
     """
     closed = state == "CLOSED"
     text = Text()
+    text.append(MARK if marked else " ", Palette.KEY)
     text.append(*glyph_span(labels))
     text.append(f" #{number}", Palette.CLOSED if closed else Palette.EMPHASIS)
     if open_count is not None and total_count is not None:
@@ -64,7 +70,7 @@ def filtered_text(
 ) -> Text:
     """Render a run of filtered-out issues as a single dimmed line."""
     text = Text()
-    text.append(f"{NO_LABEL} ")
+    text.append(f" {NO_LABEL} ")
     if open_count is not None and total_count is not None:
         text.append(f"{open_count}/{total_count} ", Palette.CLOSED)
     text.append(filtered_run_label(count), Palette.CLOSED)
@@ -79,6 +85,9 @@ class IssueNodeData:
     state: str
     title: str
     children_loaded: bool = True
+    open_count: int | None = None
+    total_count: int | None = None
+    labels: Sequence[str] = ()
 
     @property
     def key(self) -> int:
@@ -87,6 +96,17 @@ class IssueNodeData:
     @property
     def fetch_number(self) -> int:
         return self.number
+
+    def label(self, marked: bool) -> Text:
+        return issue_text(
+            self.number,
+            self.state,
+            self.title,
+            self.open_count,
+            self.total_count,
+            self.labels,
+            marked,
+        )
 
 
 @dataclass
@@ -230,10 +250,15 @@ class IssueTree(Tree[TreeItemData]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("right", "expand_node", "Expand", show=False),
         Binding("left", "collapse_node", "Collapse", show=False),
+        # Tree binds space to toggle_node, and a focused widget's
+        # bindings beat the app's; the app. prefix is what routes it
+        # back — a bare name here would shadow and then fire nothing.
+        Binding("space", "app.mark_toggle", "Mark", show=False),
     ]
 
-    def __init__(self, *, id: str | None = None) -> None:
+    def __init__(self, marks: Marks, *, id: str | None = None) -> None:
         super().__init__("Epics", id=id)
+        self._marks = marks
         self.show_root = False
         self.auto_expand = False
         self.hide_closed = False
@@ -262,6 +287,21 @@ class IssueTree(Tree[TreeItemData]):
             if isinstance(data, IssueNodeData) and data.number == number:
                 return node
         return None
+
+    def _label(self, data: IssueNodeData) -> Text:
+        return data.label(data.number in self._marks)
+
+    def refresh_mark(self, number: int) -> None:
+        """Every node for `number`: an epic that is also a sub-issue
+        appears both at top level and under its parent."""
+        for node in self._walk(self.root):
+            if isinstance(node.data, IssueNodeData) and node.data.number == number:
+                node.set_label(self._label(node.data))
+
+    def refresh_marks(self) -> None:
+        for node in self._walk(self.root):
+            if isinstance(node.data, IssueNodeData):
+                node.set_label(self._label(node.data))
 
     def _node_for_key(self, key: int) -> TreeNode[TreeItemData] | None:
         for node in self._walk(self.root):
@@ -480,12 +520,13 @@ class IssueTree(Tree[TreeItemData]):
     def _add_standalone_issue(
         self, parent: TreeNode[TreeItemData], issue: MilestoneIssue
     ) -> None:
-        parent.add_leaf(
-            issue_text(issue.number, issue.state, issue.title, labels=issue.labels),
-            data=IssueNodeData(
-                number=issue.number, state=issue.state, title=issue.title
-            ),
+        data = IssueNodeData(
+            number=issue.number,
+            state=issue.state,
+            title=issue.title,
+            labels=issue.labels,
         )
+        parent.add_leaf(self._label(data), data=data)
 
     def _add_epic(self, parent: TreeNode[TreeItemData], epic: Epic) -> None:
         data = IssueNodeData(
@@ -493,15 +534,11 @@ class IssueTree(Tree[TreeItemData]):
             state=epic.state,
             title=epic.title,
             children_loaded=False,
+            open_count=epic.open_count,
+            total_count=epic.total_count,
+            labels=epic.labels,
         )
-        label = issue_text(
-            epic.number,
-            epic.state,
-            epic.title,
-            epic.open_count,
-            epic.total_count,
-            epic.labels,
-        )
+        label = self._label(data)
         if epic.total_count > 0:
             parent.add(label, data=data)
         else:
@@ -600,15 +637,15 @@ class IssueTree(Tree[TreeItemData]):
                 for number in item.numbers:
                     self._add_sub_issue(node, covered[number])
             return
-        data = IssueNodeData(number=item.number, state=item.state, title=item.title)
-        label = issue_text(
-            item.number,
-            item.state,
-            item.title,
-            item.open_count,
-            item.total_count,
-            item.labels,
+        data = IssueNodeData(
+            number=item.number,
+            state=item.state,
+            title=item.title,
+            open_count=item.open_count,
+            total_count=item.total_count,
+            labels=item.labels,
         )
+        label = self._label(data)
         if not item.children:
             parent.add_leaf(label, data=data)
             return
@@ -621,25 +658,17 @@ class IssueTree(Tree[TreeItemData]):
         parent: TreeNode[TreeItemData],
         sub: SubIssueData,
     ) -> None:
-        data = IssueNodeData(number=sub.number, state=sub.state, title=sub.title)
+        data = IssueNodeData(
+            number=sub.number, state=sub.state, title=sub.title, labels=sub.labels
+        )
         if sub.children:
-            open_count = sum(1 for c in sub.children if c.state == "OPEN")
-            label = issue_text(
-                sub.number,
-                sub.state,
-                sub.title,
-                open_count,
-                len(sub.children),
-                sub.labels,
-            )
-            node = parent.add(label, data=data)
+            data.open_count = sum(1 for c in sub.children if c.state == "OPEN")
+            data.total_count = len(sub.children)
+            node = parent.add(self._label(data), data=data)
             for child in sub.children:
                 self._add_sub_issue(node, child)
         else:
-            parent.add_leaf(
-                issue_text(sub.number, sub.state, sub.title, labels=sub.labels),
-                data=data,
-            )
+            parent.add_leaf(self._label(data), data=data)
 
     @property
     def selected_issue_number(self) -> int | None:
@@ -649,6 +678,10 @@ class IssueTree(Tree[TreeItemData]):
         if node is None or not isinstance(node.data, IssueNodeData):
             return None
         return node.data.number
+
+    def advance(self) -> None:
+        """Move the cursor down one row, staying put on the last."""
+        self.action_cursor_down()
 
     def action_expand_node(self) -> None:
         node = self.cursor_node
@@ -672,6 +705,7 @@ class IssueList(OptionList):
 
     def __init__(
         self,
+        marks: Marks,
         *,
         milestone: str,
         item_name: str,
@@ -679,6 +713,8 @@ class IssueList(OptionList):
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
+        self._marks = marks
+        self._issues: dict[int, Issue] = {}
         self.milestone = milestone
         self.item_name = item_name
         self.soon_filterable = soon_filterable
@@ -689,8 +725,34 @@ class IssueList(OptionList):
     def label_filter(self) -> str | None:
         return "soon" if self.soon_only else None
 
+    def _prompt(self, issue: Issue) -> Text:
+        return issue_text(
+            issue.number,
+            issue.state,
+            issue.title,
+            labels=issue.labels,
+            marked=issue.number in self._marks,
+        )
+
+    def _refresh_option(self, index: int) -> None:
+        option_id = self.get_option_at_index(index).id
+        if option_id is not None:
+            self.replace_option_prompt_at_index(
+                index, self._prompt(self._issues[int(option_id)])
+            )
+
+    def refresh_mark(self, number: int) -> None:
+        for index in range(self.option_count):
+            if self.get_option_at_index(index).id == str(number):
+                self._refresh_option(index)
+
+    def refresh_marks(self) -> None:
+        for index in range(self.option_count):
+            self._refresh_option(index)
+
     def load_issues(self, issues: Sequence[Issue], select: int | None = None) -> None:
         self.clear_options()
+        self._issues = {issue.number: issue for issue in issues}
         rows = (
             partition_filtered(issues, lambda issue: issue.state != "CLOSED")
             if self.hide_closed
@@ -702,23 +764,30 @@ class IssueList(OptionList):
                 # every issue a run covers is a closed leaf.
                 self.add_option(Option(filtered_text(row.count), disabled=True))
                 continue
-            self.add_option(
-                Option(
-                    issue_text(row.number, row.state, row.title, labels=row.labels),
-                    id=str(row.number),
-                )
-            )
+            self.add_option(Option(self._prompt(row), id=str(row.number)))
         if not issues:
             return
         if select is not None and self.highlight_issue(select):
             return
         self.highlighted = self._first_selectable()
 
-    def _first_selectable(self) -> int | None:
-        for index in range(self.option_count):
+    def _first_selectable(self, start: int = 0) -> int | None:
+        for index in range(start, self.option_count):
             if not self.get_option_at_index(index).disabled:
                 return index
         return None
+
+    def advance(self) -> None:
+        """Move the highlight down one row, staying put on the last.
+
+        `OptionList.action_cursor_down` wraps to the top; a mark-and-
+        advance that wrapped would run the marks in a circle.
+        """
+        if self.highlighted is None:
+            return
+        following = self._first_selectable(self.highlighted + 1)
+        if following is not None:
+            self.highlighted = following
 
     def highlight_issue(self, number: int) -> bool:
         """Move the highlight to `number`; False if it isn't in the list."""
@@ -740,7 +809,8 @@ class IssueList(OptionList):
 
 @final
 class StatusBar(Horizontal):
-    """One-row bar: last action/load result on the left, help hint right."""
+    """One-row bar: last action/load result on the left, then the mark
+    count when any, then the help hint."""
 
     DEFAULT_CSS = """
     StatusBar {
@@ -750,6 +820,10 @@ class StatusBar(Horizontal):
     }
     StatusBar #status-message {
         width: 1fr;
+        padding: 0 1;
+    }
+    StatusBar #mark-count {
+        width: auto;
         padding: 0 1;
     }
     StatusBar #help-hint {
@@ -762,7 +836,13 @@ class StatusBar(Horizontal):
     @override
     def compose(self) -> ComposeResult:
         yield Static("", id="status-message")
+        yield Static("", id="mark-count")
         yield Static("? help", id="help-hint")
 
     def set_status(self, message: str) -> None:
         self.query_one("#status-message", Static).update(message)
+
+    def set_mark_count(self, count: int) -> None:
+        self.query_one("#mark-count", Static).update(
+            Text(f"{count} marked", Palette.KEY) if count else ""
+        )

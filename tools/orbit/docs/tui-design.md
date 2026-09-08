@@ -47,8 +47,8 @@ the widget tree (like initial HTML):
 
 ```python
 def compose(self) -> ComposeResult:
-    yield IssueTree(id="epic-tree")
-    yield IssueList(id="issue-list")
+    yield IssueTree(self._marks, id="epic-tree")
+    yield IssueList(self._marks, id="issue-list", ...)
     yield StatusBar()
 ```
 
@@ -102,6 +102,14 @@ Bindings resolve focused-widget → screen → app. Arrow keys are
 consumed by the tree/list; letters fall through to the app. The help
 modal binds `?` itself, which shadows the app's `?` and makes the same
 key toggle the modal closed.
+
+`space` is the one key bound in both places. Textual's `Tree` binds it
+to `toggle_node`, and the focused widget wins, so `IssueTree` carries a
+shadowing `Binding("space", "app.mark_toggle")` that routes it back up.
+The `app.` prefix matters: a bare action name would shadow
+`toggle_node` and then fire nothing. The app binding still has to
+exist, because `reserved_keys()` is derived from the app's `BINDINGS`
+alone.
 
 `check_action()` is the app-level veto hook: any action in
 `_MAIN_SCREEN_ACTIONS` is blocked while a modal or detail screen is on
@@ -214,9 +222,15 @@ Screens can return values: `EpicPickerScreen` is
 
 ## State
 
-The app holds two pieces of state: `_view` (an enum: EPICS / SPRINT /
-BACKLOG) and `_hide_closed`, which it fans out to every view widget
-because that filter applies to all of them. Each view is its own
+The app holds three pieces of state: `_view` (an enum: EPICS / SPRINT /
+BACKLOG), `_hide_closed`, which it fans out to every view widget
+because that filter applies to all of them, and `_marks`, a `Marks`
+store (`orbit.marks`) of dired-style marks keyed by issue number and
+shared by every view widget, so marks outlive a refresh or a view
+switch. Widgets read the store when they render a row and re-render a
+single row in place (`TreeNode.set_label`,
+`OptionList.replace_option_prompt_at_index`) when a mark changes; the status
+bar shows the count so marks in a hidden view are not invisible. Each view is its own
 widget — the epics tree plus one `IssueList` per flat view — mirroring
 what the user sees. An `IssueList` carries its view's query
 configuration (milestone, soon filterability) as plain data, and the
