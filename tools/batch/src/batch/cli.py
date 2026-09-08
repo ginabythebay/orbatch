@@ -431,6 +431,7 @@ def _session(
     max_tests: int | None = None,
     plan_guidance: str | None = None,
 ) -> VmSession:
+    models = config.models
     return VmSession(
         worktree=worktree,
         disk=disk,
@@ -440,7 +441,9 @@ def _session(
             issue=issue,
             guidance=guidance,
             base=base,
-            model=model,
+            model=models.resolve("default" if issue is None else "implement", model),
+            plan_model=models.resolve("plan", model),
+            review_model=models.resolve("review", model),
             max_tests=max_tests,
             plan_guidance=plan_guidance,
         ),

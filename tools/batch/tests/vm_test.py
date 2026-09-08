@@ -530,6 +530,14 @@ class TestAgentCommand:
         )
         assert agent_command(config(), issue=1499) == "tools/drive 1499"
 
+    def test_plan_and_review_models_reach_ralph(self) -> None:
+        assert agent_command(
+            config(), issue=1499, model="opus", plan_model="fable", review_model="haiku"
+        ) == ("tools/drive 1499 --model opus --plan-model fable --review-model haiku")
+        assert agent_command(config(), issue=1499, model="opus") == (
+            "tools/drive 1499 --model opus"
+        )
+
     def test_hostile_guidance_cannot_break_out_of_the_send(self) -> None:
         guidance = 'don\'t; poweroff # "quoted" $(echo hi)\nnewline'
 

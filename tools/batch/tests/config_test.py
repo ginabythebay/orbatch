@@ -16,6 +16,7 @@ from batch.config import (
     BatchConfig,
     Commands,
     ConfigError,
+    Models,
     load_config,
 )
 
@@ -43,6 +44,14 @@ _COMMANDS = (
     'session = "dev/session"\n'
     'agent = "dev/agent"\n'
     'plan_batch = "dev/plan-batch"\n'
+)
+_MODELS = (
+    "[models]\n"
+    'default = "opus"\n'
+    'plan = "fable"\n'
+    'implement = "opus"\n'
+    'review = "fable"\n'
+    'debug = "sonnet"\n'
 )
 
 
@@ -102,6 +111,31 @@ class TestLoad:
             "Ada Lovelace",
             "ada@example.com",
             "acme-guest-token",
+        )
+
+    def test_the_models_table_arrives_with_absent_steps_as_none(
+        self, tmp_path: Path
+    ) -> None:
+        root = _write(tmp_path, _VM + _REPO + _COMMANDS + _MODELS)
+        partial = _write(
+            tmp_path / "partial",
+            _VM + _REPO + _COMMANDS + '[models]\nplan = "fable"\n',
+        )
+
+        assert load_config(root).models == Models(
+            default="opus",
+            plan="fable",
+            implement="opus",
+            review="fable",
+            debug="sonnet",
+        )
+        assert load_config(partial).models == Models(plan="fable")
+
+    def test_an_absent_models_table_yields_no_models(self, tmp_path: Path) -> None:
+        root = _write(tmp_path, _VM + _REPO + _COMMANDS)
+
+        assert load_config(root).models == Models(
+            default=None, plan=None, implement=None, review=None, debug=None
         )
 
 
@@ -337,14 +371,47 @@ class TestValidation:
 
         assert caught.value.problems == ("commands: unknown key(s) review",)
 
-    def test_problems_from_all_three_tables_arrive_in_one_report(
+    def test_an_unknown_models_key_is_refused(self, tmp_path: Path) -> None:
+        root = _write(
+            tmp_path, _VM + _REPO + _COMMANDS + '[models]\nverify = "fable"\n'
+        )
+
+        with pytest.raises(ConfigError) as caught:
+            _ = load_config(root)
+
+        assert caught.value.problems == ("models: unknown key(s) verify",)
+
+    @pytest.mark.parametrize("key", ["default", "plan", "implement", "review", "debug"])
+    @pytest.mark.parametrize("value", ["7", '""'], ids=["integer", "empty"])
+    def test_an_empty_model_string_names_the_key(
+        self, tmp_path: Path, key: str, value: str
+    ) -> None:
+        root = _write(
+            tmp_path, _VM + _REPO + _COMMANDS + f"[models]\n{key} = {value}\n"
+        )
+
+        with pytest.raises(ConfigError) as caught:
+            _ = load_config(root)
+
+        assert caught.value.problems == (f'models: "{key}" must be a non-empty string',)
+
+    def test_a_models_entry_that_is_not_a_table_says_so(self, tmp_path: Path) -> None:
+        root = _write(tmp_path, f'models = "opus"\n{_VM}{_REPO}{_COMMANDS}')
+
+        with pytest.raises(ConfigError) as caught:
+            _ = load_config(root)
+
+        assert caught.value.problems == ('"models" must be a [models] table',)
+
+    def test_problems_from_all_four_tables_arrive_in_one_report(
         self, tmp_path: Path
     ) -> None:
         root = _write(
             tmp_path,
             "[vm]\nseed_image = 7\n"
             + _repo(slug='"nope"')
-            + '[commands]\ncli = "dev/batch"\nsetup = "dev/setup"\nsession = ""\n',
+            + '[commands]\ncli = "dev/batch"\nsetup = "dev/setup"\nsession = ""\n'
+            + '[models]\nplan = ""\n',
         )
 
         with pytest.raises(ConfigError) as caught:
@@ -356,6 +423,7 @@ class TestValidation:
             'commands: "session" must be a non-empty string',
             'commands: missing required key "agent"',
             'commands: missing required key "plan_batch"',
+            'models: "plan" must be a non-empty string',
         )
 
     def test_a_bad_slug_a_bad_author_and_a_bad_seed_image_arrive_together(
@@ -379,11 +447,27 @@ class TestValidation:
         )
 
 
+class TestModelsResolve:
+    def test_an_override_beats_the_step_and_the_default(self) -> None:
+        models = Models(default="opus", plan="fable")
+
+        assert models.resolve("plan", "haiku") == "haiku"
+
+    def test_a_step_beats_the_default(self) -> None:
+        assert Models(default="opus", plan="fable").resolve("plan", None) == "fable"
+
+    def test_the_default_fills_a_step_without_an_entry(self) -> None:
+        assert Models(default="opus").resolve("plan", None) == "opus"
+
+    def test_nothing_configured_resolves_to_nothing(self) -> None:
+        assert Models().resolve("plan", None) is None
+
+
 class TestAFullyPopulatedConfig:
     def test_every_key_round_trips(self, tmp_path: Path) -> None:
         root = _write(
             tmp_path,
-            f'[vm]\nseed_image = "~/images/seed.raw"\n{_REPO}{_COMMANDS}',
+            f'[vm]\nseed_image = "~/images/seed.raw"\n{_REPO}{_COMMANDS}{_MODELS}',
         )
 
         assert load_config(root) == BatchConfig(
@@ -398,5 +482,12 @@ class TestAFullyPopulatedConfig:
                 session="dev/session",
                 agent="dev/agent",
                 plan_batch="dev/plan-batch",
+            ),
+            models=Models(
+                default="opus",
+                plan="fable",
+                implement="opus",
+                review="fable",
+                debug="sonnet",
             ),
         )

@@ -8,7 +8,7 @@ from subprocess import CalledProcessError
 
 import pytest
 
-from batch.config import CONFIG_FILENAME, BatchConfig, Commands
+from batch.config import CONFIG_FILENAME, NO_MODELS, BatchConfig, Commands, Models
 from batch.github.client import BatchGitHub
 from batch.models import (
     Alignment,
@@ -73,10 +73,15 @@ TEST_COMMANDS_TOML = (
     f'agent = "{TEST_COMMANDS.agent}"\n'
     f'plan_batch = "{TEST_COMMANDS.plan_batch}"\n'
 )
+TEST_CONFIG_TOML = (
+    f'[vm]\nseed_image = "{TEST_SEED}"\n' + TEST_REPO_TOML + TEST_COMMANDS_TOML
+)
 
 
 def batch_config(
-    slug: str = TEST_SLUG, commands: Commands = TEST_COMMANDS
+    slug: str = TEST_SLUG,
+    commands: Commands = TEST_COMMANDS,
+    models: Models = NO_MODELS,
 ) -> BatchConfig:
     return BatchConfig(
         seed_image=Path("/images/seed.raw"),
@@ -85,16 +90,13 @@ def batch_config(
         author_email=TEST_AUTHOR_EMAIL,
         github_token_item=TEST_TOKEN_ITEM,
         commands=commands,
+        models=models,
     )
 
 
 def write_config(root: Path, text: str | None = None) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    _ = (root / CONFIG_FILENAME).write_text(
-        text
-        if text is not None
-        else f'[vm]\nseed_image = "{TEST_SEED}"\n' + TEST_REPO_TOML + TEST_COMMANDS_TOML
-    )
+    _ = (root / CONFIG_FILENAME).write_text(TEST_CONFIG_TOML if text is None else text)
     return root
 
 

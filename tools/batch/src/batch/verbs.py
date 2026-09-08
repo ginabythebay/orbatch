@@ -100,6 +100,7 @@ class Verbs:
         base = base_under(batch, issue)
         slot = self._stack.ensure(issue.number, base)
         config_dir = self._runner.config_dir(issue.number)
+        models = self._config.models
         self._runner.write_config(config_dir)
         self._runner.launch(
             issue.number,
@@ -112,7 +113,9 @@ class Verbs:
                     issue=issue.number,
                     base=base,
                     rework=True,
-                    model=self._model,
+                    model=models.resolve("implement", self._model),
+                    plan_model=models.resolve("plan", self._model),
+                    review_model=models.resolve("review", self._model),
                 ),
             ),
         )

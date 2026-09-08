@@ -210,7 +210,9 @@ class Runtime:
                 slot,
                 mount_root=manager.mount_root,
                 config_dir=config_dir,
-                agent=plan_batch_command(self.config, targets, model),
+                agent=plan_batch_command(
+                    self.config, targets, self.config.models.resolve("plan", model)
+                ),
                 ram=ram,
             )
             command = runner.vibe_command(session)

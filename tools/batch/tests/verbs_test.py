@@ -6,6 +6,7 @@ from subprocess import CompletedProcess
 
 import pytest
 
+from batch.config import NO_MODELS, Models
 from batch.models import BatchIssue, RecoveryRefusal
 from batch.recovery import Recovery
 from batch.testing.payloads import (
@@ -27,6 +28,7 @@ def verbs(
     *issues: BatchIssue,
     live: tuple[int, ...] = (),
     model: str | None = None,
+    models: Models = NO_MODELS,
 ) -> tuple[Verbs, FakeState, FakeStack, FakeRunner]:
     state = FakeState(*issues)
     stack = FakeStack(tmp_path)
@@ -39,7 +41,7 @@ def verbs(
             stack,
             runner,
             Recovery(state, runner),
-            config=batch_config(),
+            config=batch_config(models=models),
             model=model,
         ),
         state,
@@ -112,7 +114,28 @@ class TestRework:
 
         _ = keys.rework(10)
 
-        assert runner.agents() == ["tools/drive 10 --rework --base main --model opus"]
+        assert runner.agents() == [
+            (
+                "tools/drive 10 --rework --base main"
+                " --model opus --plan-model opus --review-model opus"
+            )
+        ]
+
+    def test_the_config_models_reach_the_rework_agent(self, tmp_path: Path) -> None:
+        rework, _, _, runner = verbs(
+            tmp_path,
+            batch_issue(10, BatchLabel.READY_FOR_REVIEW),
+            models=Models(default="opus", review="fable"),
+        )
+
+        _ = rework.rework(10)
+
+        assert runner.agents() == [
+            (
+                "tools/drive 10 --rework --base main"
+                " --model opus --plan-model opus --review-model fable"
+            )
+        ]
 
     def test_an_implementing_issue_is_refused_for_what_it_is(
         self, tmp_path: Path
