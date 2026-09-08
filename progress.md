@@ -817,3 +817,51 @@ Notes for next iteration: `#32` and `#34` remain the open follow-ups. If the
 tests lens keeps failing with empty stderr, that is worth its own issue — it
 silently halves the review. Persisting the toggle across launches is
 explicitly out of scope for `#45`.
+
+## 2026-09-08 — issue #46 per-step model selection in batch.toml
+
+https://github.com/ginabythebay/orbatch/issues/46
+
+Decisions:
+- Issue's design: `[models]` with `default`/`plan`/`implement`/`review`/`debug`,
+  a frozen `Models` (all `str | None`) on `BatchConfig`, and
+  `resolve(step, override) -> override or step or default`. `Step` is a
+  `Literal` and `resolve` maps through a dict literal, not `getattr` —
+  `getattr(self, step)` returns `Any` and basedpyright flags it.
+- `_parse_models` mirrors `_parse_repo` but every key is optional: absent keys
+  are skipped, empty/non-string ones are reported, unknown ones refused. An
+  absent table yields `NO_MODELS` (module-level singleton; a `Models()` default
+  argument trips ruff B008).
+- Resolution is on the host at each call site, never in the guest: orchestrator
+  `_drive` (implement/plan/review), `Debugger.enter` (debug, or `default` when
+  `--fresh`), `verbs._launch` (rework -> implement/plan/review), `cli._session`
+  (`default` with no issue, else implement/plan/review) and
+  `runtime.plan_session` (plan, so orbit's `p` verb gets it too).
+- `agent_command` emits `--plan-model`/`--review-model` only in the issue
+  branch; a bare session is `claude` itself and takes `--model` alone.
+  `_model_flag` gained a flag-name argument.
+- `vwt` lost `DEFAULT_MODEL = "opus"` and now defaults `--model` to None (see
+  review). The model is the repo's to configure; the flag is the override.
+- New `payloads.TEST_CONFIG_TOML` so a CLI test can append a `[models]` table
+  to the standard config; `batch_config(models=)` for the unit-level fakes.
+
+Files: tools/batch/src/batch/{config,vm,orchestrator,verbs,cli,runtime,
+worktree}.py, tools/batch/src/batch/testing/payloads.py, tests in
+{config,vm,orchestrator,verbs,cli,worktree}_test.py, README.md.
+
+Review: five findings, all fixed. The real one: `vwt` always passed
+`--model opus`, so on that path `[models]` could never take effect AND a repo
+with no `[models]` still got `--plan-model opus --review-model opus` — the
+"byte-for-byte unchanged" invariant broken exactly where the user cannot opt
+out. Also: no test distinguished `implement` from `default` (all three
+call sites would have passed under a mutation — verified red after fixing);
+`--model`'s help still said "implementation agents"; the bare-session
+"no plan/review flags" contract was asserted where it could not fail; no
+progress entry.
+
+Notes for next iteration: `#32` and `#34` remain the open follow-ups. The two
+new flags are a contract change for every target repo's agent script —
+`dev/ralph` here does not accept them yet, which is harmless only while no
+`batch.toml` in this repo carries a `[models]` table. `--model` on `run`,
+`vm console` and `vwt` now overrides every step of that invocation, so there
+is no way to override one step alone from the command line.
