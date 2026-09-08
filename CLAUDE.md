@@ -39,8 +39,11 @@ The active sprint milestone is defined once, in `.orbit.toml` at the
 repo root (`[milestone] current`). Run `uv run orbit sprint` to see it
 and its open issues.
 
-Create sprint issues with `uv run orbit` (`create`, `create-epic`,
-`move`, `schedule`), which default to the current milestone. See
+Create sprint issues with `uv run orbit create` and `orbit create-epic`,
+which default to the current milestone. `orbit move` renests an issue
+under an epic and takes that epic's milestone, `orbit schedule` changes
+an issue's milestone, and `orbit reorder` sets implementation order
+within an epic. See
 `.claude/issue-guidance.md` for the rules: every leaf title carries an
 AFK/HITL marker and a line estimate, every leaf belongs to an epic or is
 standalone, and an issue whose files and tests are already known gets

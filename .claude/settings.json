@@ -18,11 +18,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'basedpyright|pyright|lint' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/pyright-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE '(^|[[:space:]/])(basedpyright|pyright|lint)([[:space:]]|$)' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/pyright-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'pytest' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/pytest-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE '(^|[[:space:]/])pytest([[:space:]]|$)' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/pytest-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
           },
           {
             "type": "command",
@@ -30,11 +30,11 @@
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'gh issue (create|edit)|orbit (create|create-epic|set-body|edit)' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/issue-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE '(^|[[:space:]/])(gh issue (create|edit)|orbit (create-epic|create|set-body|move|reorder|schedule))([[:space:]]|$)' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/issue-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
           },
           {
             "type": "command",
-            "command": "jq -r '.tool_input.command // \"\"' | grep -qE 'git commit' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/commit-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
+            "command": "jq -r '.tool_input.command // \"\"' | grep -qE '(^|[[:space:]/])git commit([[:space:]]|$)' && jq -n --rawfile guidance \"$CLAUDE_PROJECT_DIR\"/.claude/commit-guidance.md '{hookSpecificOutput: {hookEventName: \"PostToolUse\", additionalContext: $guidance}}' || jq -n '{}'"
           }
         ]
       }
