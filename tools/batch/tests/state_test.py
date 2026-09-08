@@ -273,7 +273,7 @@ class TestSetState:
             (BatchLabel.QUEUED, "LA_queued"),
             (BatchLabel.PLANNED, "LA_planned"),
             (BatchLabel.IMPLEMENTING, "LA_implementing"),
-            (BatchLabel.READY_FOR_REVIEW, "LA_readyForReview"),
+            (BatchLabel.READY_FOR_REVIEW, "LA_ready-for-review"),
             (BatchLabel.STUCK, "LA_stuck"),
         ],
     )

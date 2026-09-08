@@ -854,6 +854,22 @@ class TestSetIssueBody:
         assert kwargs == {"issueId": "I_42", "body": "the new body"}
 
 
+class TestFetchLabelId:
+    def test_one_query_returns_the_label_id(self) -> None:
+        transport = FakeTransport([{"repository": {"l0": {"id": "LA_epic"}}}])
+
+        assert _client(transport).fetch_label_id("epic") == "LA_epic"
+
+        assert len(transport.calls) == 1
+        assert transport.calls[0].variables["l0"] == "epic"
+
+    def test_a_missing_label_is_named_in_the_error(self) -> None:
+        transport = FakeTransport([{"repository": {"l0": None}}])
+
+        with pytest.raises(RuntimeError, match="Labels not found in repo: epic"):
+            _client(transport).fetch_label_id("epic")
+
+
 class TestAddComment:
     def test_passes_subject_id_and_body_to_mutation(self) -> None:
         transport = FakeTransport([{}])

@@ -169,12 +169,14 @@ version = "0.1.0"
 source = { editable = "packages/ghgql" }
 dependencies = [
     { name = "gql", extra = ["requests"] },
+    { name = "pydantic" },
     { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "gql", extras = ["requests"], specifier = ">=4.0.0" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "requests", specifier = ">=2.32.0" },
 ]
 

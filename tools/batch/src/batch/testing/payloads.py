@@ -226,11 +226,10 @@ def missing(*numbers: int) -> Mapping[str, object]:
 
 
 def label_ids(missing: Sequence[str] = ()) -> Mapping[str, object]:
-    aliases = ("queued", "planned", "implementing", "readyForReview", "stuck")
     return {
         "repository": {
-            alias: None if alias in missing else {"id": f"LA_{alias}"}
-            for alias in aliases
+            f"l{index}": None if label in missing else {"id": f"LA_{label}"}
+            for index, label in enumerate(BatchLabel)
         }
     }
 

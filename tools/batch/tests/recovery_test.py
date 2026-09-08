@@ -142,7 +142,7 @@ class TestSkip:
 
         assert result.refusal is None
         assert result.found is BatchLabel.READY_FOR_REVIEW
-        assert label_writes(fake) == [("remove", "I_1503", "LA_readyForReview")]
+        assert label_writes(fake) == [("remove", "I_1503", "LA_ready-for-review")]
 
     @pytest.mark.parametrize("label", ["ready-for-review", "planned"])
     def test_a_merged_issue_keeps_the_label_teardown_reads(self, label: str) -> None:
