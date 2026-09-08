@@ -519,3 +519,51 @@ you run through Bash that merely NAMES basedpyright is denied now, including
 portability guard sweeps untracked files too, so never let the extraction
 repo's name back into `.claude/` — that is why the guidance file names no
 source for what it was adapted from.
+
+## 2026-09-08 — issue #45 orbit TUI hides closed issues by default
+
+https://github.com/ginabythebay/orbatch/issues/45
+
+Decisions:
+- Issue's design: `_hide_closed = True` set BEFORE the three view widgets are
+  built and passed as `hide_closed=` to each ctor (new keyword on `IssueTree`
+  and `IssueList`, defaulting to `False`), so first load and toggle state
+  cannot disagree. One place to read the default.
+- Test audit was the bulk of the work: 26 tests pressed `f` only to reach the
+  filtered state — keypress dropped, assertions unchanged. 7 cursor-retarget
+  tests press `f` to *transition* (navigate unfiltered, then hide, assert the
+  cursor moved to the run that swallowed it); those gained a LEADING `f` so
+  the sequence is off -> navigate -> on. 6 tests unrelated to the filter
+  (`test_loads_epics_on_start`, refresh/standalone/goto) assumed the
+  unfiltered tree and gained a leading `f`.
+- `test_f_hides_closed_epics` -> `test_f_reveals_closed_issues` (the on->off
+  direction is now the first press); `test_toggling_back_restores_the_full_tree`
+  -> `test_toggling_back_hides_them_again`.
+- `test_the_toggle_is_blocked_on_the_detail_screen` keeps its `f` on the
+  detail screen; its final assertion inverted (still filtered) along with the
+  default, so it stays red if the block breaks.
+- `test_the_filter_toggle_round_trips_the_section` no longer pins literal
+  labels — it captures the section at boot, asserts one press changes it and
+  the second restores it. Default-agnostic; the literal contents are pinned by
+  its two neighbours.
+- Test-plan item 1 asked for `_hide_closed`/widget `hide_closed` assertions.
+  Written through public widget attrs to avoid `reportPrivateUsage`, then
+  dropped entirely after review — see below.
+- Help text ("Toggle hide-closed") unchanged; still true as a toggle label.
+
+Files: tools/orbit/src/orbit/tui/{app,widgets}.py,
+tools/orbit/tests/tui_test.py, tools/orbit/docs/tui-design.md.
+
+Review: one finding (conventions), fixed. The startup test asserted widget
+internals, which `tui-design.md` bans for this file and which mirrors the
+diff. Replaced with rendered-label assertions plus a new parametrized
+`test_the_flat_views_start_with_closed_issues_hidden` that presses `c`/`b`
+and pins each list's option ids (`[None, "41"]`). Verified red by flipping
+the default back. Correctness lens: no findings. The tests lens and the
+consolidation step both failed with empty stderr, so there was no merged
+`## Findings` list this round.
+
+Notes for next iteration: `#32` and `#34` remain the open follow-ups. If the
+tests lens keeps failing with empty stderr, that is worth its own issue — it
+silently halves the review. Persisting the toggle across launches is
+explicitly out of scope for `#45`.

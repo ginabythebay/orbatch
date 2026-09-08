@@ -734,14 +734,45 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                lists = list(app.query(IssueList))
-                assert len(lists) == 2
-                assert app.query_one(IssueTree).hide_closed
-                assert all(issue_list.hide_closed for issue_list in lists)
                 labels = _root_labels(app.query_one(IssueTree))
                 assert any("#905" in label for label in labels)
                 assert not any("#852" in label or "#853" in label for label in labels)
                 assert any("filtered" in label for label in labels)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("key", "list_id"),
+        [("c", "#sprint-list"), ("b", "#backlog-list")],
+    )
+    async def test_the_flat_views_start_with_closed_issues_hidden(
+        self, key: str, list_id: str
+    ) -> None:
+        issues = [
+            MilestoneIssue(
+                number=number,
+                state=state,
+                title=title,
+                parent_number=None,
+                is_epic=False,
+            )
+            for number, state, title in ((40, "CLOSED", "done"), (41, "OPEN", "live"))
+        ]
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=issues),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press(key)
+                await _settle(pilot)
+                issue_list = app.query_one(list_id, IssueList)
+                ids = [
+                    issue_list.get_option_at_index(index).id
+                    for index in range(issue_list.option_count)
+                ]
+                assert ids == [None, "41"]
+                assert issue_list.get_option_at_index(0).disabled
 
     @pytest.mark.asyncio
     async def test_f_reveals_closed_issues(self) -> None:
