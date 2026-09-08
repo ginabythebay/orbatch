@@ -4,11 +4,8 @@ set -euo pipefail
 
 FILE=$(jq -r '.tool_input.file_path // ""')
 
-# Only format Python files
 [[ "$FILE" == *.py ]] || exit 0
-# Skip files outside the project
 [[ "$FILE" == "$CLAUDE_PROJECT_DIR"/* ]] || exit 0
-# Skip if file was deleted
 [[ -f "$FILE" ]] || exit 0
 
 # Autofix authority here is invisible, so it is pinned to import order rather

@@ -73,3 +73,7 @@ def _hook_scripts() -> list[str]:
 @pytest.mark.parametrize("reference", _hook_scripts())
 def test_every_hook_script_is_executable(reference: str) -> None:
     assert os.access(_PROJECT_ROOT / reference, os.X_OK)
+
+
+def test_the_hook_scripts_are_found() -> None:
+    assert _hook_scripts()
