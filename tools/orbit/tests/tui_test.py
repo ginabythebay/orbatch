@@ -3177,6 +3177,61 @@ class TestMarks:
                 assert not _marked(tree.root.children[0])
 
     @pytest.mark.asyncio
+    async def test_space_in_a_list_reaches_the_tree_goto_reveals_without_reloading(
+        self,
+    ) -> None:
+        with _standalone_milestone_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                tree = app.query_one(IssueTree)
+                await pilot.press("c")
+                await _settle(pilot)
+                assert (
+                    app.query_one("#sprint-list", IssueList).selected_issue_number
+                    == 905
+                )
+                await pilot.press("space")
+                await _settle(pilot)
+                await pilot.press("b")
+                await _settle(pilot)
+                await pilot.press("g")
+                await _settle(pilot)
+                await pilot.press("9", "0", "5", "enter")
+                await _settle(pilot)
+                assert tree.display
+                assert _marked(tree.root.children[0])
+
+    @pytest.mark.asyncio
+    async def test_a_nested_epic_re_renders_both_of_its_rows(self) -> None:
+        nested = [
+            SubIssueData(number=852, state="CLOSED", title="Test speed", children=())
+        ]
+        with (
+            _patched_github() as client,
+            patch.object(client, "fetch_sub_issue_tree", return_value=nested),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("right")
+                await _settle(pilot)
+                top, under_epic = (
+                    tree.root.children[1],
+                    tree.root.children[0].children[0],
+                )
+                await pilot.press("down")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _marked(top)
+                assert _marked(under_epic)
+                await pilot.press("up")
+                await pilot.press("u")
+                await _settle(pilot)
+                assert not _marked(top)
+                assert not _marked(under_epic)
+
+    @pytest.mark.asyncio
     async def test_mark_keys_are_blocked_behind_the_help_modal(self) -> None:
         with _patched_github() as client:
             async with _app(client).run_test() as pilot:

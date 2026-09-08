@@ -47,8 +47,8 @@ the widget tree (like initial HTML):
 
 ```python
 def compose(self) -> ComposeResult:
-    yield IssueTree(id="epic-tree")
-    yield IssueList(id="issue-list")
+    yield IssueTree(self._marks, id="epic-tree")
+    yield IssueList(self._marks, id="issue-list", ...)
     yield StatusBar()
 ```
 
@@ -229,7 +229,7 @@ store (`orbit.marks`) of dired-style marks keyed by issue number and
 shared by every view widget, so marks outlive a refresh or a view
 switch. Widgets read the store when they render a row and re-render a
 single row in place (`TreeNode.set_label`,
-`OptionList.replace_option_prompt`) when a mark changes; the status
+`OptionList.replace_option_prompt_at_index`) when a mark changes; the status
 bar shows the count so marks in a hidden view are not invisible. Each view is its own
 widget — the epics tree plus one `IssueList` per flat view — mirroring
 what the user sees. An `IssueList` carries its view's query

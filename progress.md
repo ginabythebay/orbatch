@@ -612,10 +612,21 @@ tools/orbit/src/orbit/tui/{app,widgets,screens}.py,
 tools/orbit/tests/{marks_test.py (new),widgets_test.py,tui_test.py},
 tools/orbit/docs/tui-design.md.
 
-Review: round 1, seven findings, all fixed — two real bugs (the `U`
-crash with hidden closed rows in a list; stale glyphs after `g`),
-three coverage gaps (u/U in a list, modal blocking, advance over a
-placeholder), four signature-restating docstrings, this entry.
+Review: two rounds, twelve findings, all fixed. Round 1: two real bugs
+(the `U` crash with hidden closed rows in a list; stale glyphs after
+`g`), three coverage gaps (u/U in a list, modal blocking, advance over
+a placeholder), four signature-restating docstrings, this entry. Round
+2: `IssueTree.refresh_mark` went through `_find_node` and relabelled
+only the first node for a number — an epic that is also a sub-issue
+has two rows; now walks every match. Plus the untested space-in-list ->
+`g` path, a test name still calling the batch glyph "first column", and
+two stale lines in tui-design.md. Round 1's raw per-lens output was
+lost with a session restart; the PR body carries its merged findings
+and round 2 in full.
+
+Session note: base changed mid-task from `origin/issue-39` to
+`origin/main` (PR `#43` merged). SSH to GitHub has no key in this
+environment — fetch/push over https works via the gh token.
 
 Notes for next iteration: `#32` and `#34` remain open. The batch-verb
 follow-up reads `OrbitApp._marks`; epics are marked by their own

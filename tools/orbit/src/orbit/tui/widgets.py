@@ -292,9 +292,11 @@ class IssueTree(Tree[TreeItemData]):
         return data.label(data.number in self._marks)
 
     def refresh_mark(self, number: int) -> None:
-        node = self._find_node(number)
-        if node is not None and isinstance(node.data, IssueNodeData):
-            node.set_label(self._label(node.data))
+        """Every node for `number`: an epic that is also a sub-issue
+        appears both at top level and under its parent."""
+        for node in self._walk(self.root):
+            if isinstance(node.data, IssueNodeData) and node.data.number == number:
+                node.set_label(self._label(node.data))
 
     def refresh_marks(self) -> None:
         for node in self._walk(self.root):

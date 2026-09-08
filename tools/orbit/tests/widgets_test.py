@@ -22,7 +22,7 @@ def _glyph_style(text: Text) -> str:
 
 
 class TestIssueText:
-    def test_the_glyph_is_a_fixed_width_first_column(self) -> None:
+    def test_the_batch_glyph_is_a_fixed_width_second_column(self) -> None:
         queued = issue_text(42, "OPEN", "A title", labels=("queued",))
         plain = issue_text(42, "OPEN", "A title")
 
