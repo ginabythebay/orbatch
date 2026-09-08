@@ -7,6 +7,7 @@ so a renamed guidance file silently stops reaching the agent.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Final, cast
@@ -59,3 +60,16 @@ def test_the_hooks_reference_every_guidance_file() -> None:
         for path in (_PROJECT_ROOT / ".claude").glob("*-guidance.md")
     }
     assert guidance <= _hook_references()
+
+
+def _hook_scripts() -> list[str]:
+    return sorted(
+        reference
+        for reference in _hook_references()
+        if reference.startswith(".claude/hooks/")
+    )
+
+
+@pytest.mark.parametrize("reference", _hook_scripts())
+def test_every_hook_script_is_executable(reference: str) -> None:
+    assert os.access(_PROJECT_ROOT / reference, os.X_OK)
