@@ -28,15 +28,11 @@ from batch.models import (
     AccountCheckError,
     Alignment,
     AlreadyRunningError,
-    ApproveResult,
     Batch,
     EmptyTokenError,
-    Epic,
     KeychainError,
-    QueueResult,
     RecoveryResult,
     RunResult,
-    SkippedIssue,
     Slot,
     StaleSlotError,
     UnsafeRemovalError,
@@ -59,6 +55,8 @@ from batch.stack import StackManager, main_repo, worktree_root
 from batch.state import BatchState
 from batch.teardown import Teardown
 from batch.text_output import (
+    VerbLines,
+    approve_lines,
     debug_line,
     print_anomalies,
     print_batch_table,
@@ -69,6 +67,7 @@ from batch.text_output import (
     print_run_result,
     print_teardown_result,
     print_verdict,
+    queue_lines,
     targets_line,
 )
 from batch.tui.app import run_dashboard
@@ -225,31 +224,11 @@ def _epic_option(f: FC) -> FC:
     )(f)
 
 
-def _echo_epic(epic: Epic | None) -> None:
-    if epic is not None:
-        click.echo(f"Epic #{epic.number} {epic.title}")
-
-
-def _report(done: str, todo: str, result: QueueResult) -> None:
-    _echo_epic(result.epic)
-    if result.labeled:
-        numbers = ", ".join(f"#{number}" for number in result.labeled)
-        click.echo(f"{done} {numbers}")
-    else:
-        click.echo(f"Nothing to {todo}.")
-    _report_skipped(result.skipped)
-
-
-def _report_skipped(skipped: Sequence[SkippedIssue]) -> None:
-    closed = 0
-    for item in skipped:
-        if item.reason == "closed":
-            closed += 1
-        else:
-            click.echo(f"Skipped #{item.number} ({item.reason})", err=True)
-    if closed:
-        plural = "issue" if closed == 1 else "issues"
-        click.echo(f"Skipped {closed} closed {plural}.", err=True)
+def _report(lines: VerbLines) -> None:
+    for line in lines.said:
+        click.echo(line)
+    for line in lines.warned:
+        click.echo(line, err=True)
 
 
 def _vm_facts(batch: Batch, runner: VmRunner) -> dict[int, VmFacts]:
@@ -300,7 +279,7 @@ def status(
 @_pass_state
 def queue(state: BatchState, targets: tuple[int, ...], epic_number: int | None) -> None:
     """Label open unlabeled issues 'queued'."""
-    _report("Queued", "queue", state.queue(epic_number, targets))
+    _report(queue_lines("Queued", "queue", state.queue(epic_number, targets)))
 
 
 def _guidance_option(f: FC) -> FC:
@@ -309,18 +288,6 @@ def _guidance_option(f: FC) -> FC:
         default=None,
         help="Test guidance to write to each approved issue's body.",
     )(f)
-
-
-def _report_approved(result: ApproveResult) -> None:
-    _echo_epic(result.epic)
-    if result.approved:
-        numbers = ", ".join(f"#{number}" for number in result.approved)
-        click.echo(f"Approved {numbers}")
-    else:
-        click.echo("Nothing to approve.")
-    _report_skipped(result.skipped)
-    for number in result.guidance_refused:
-        click.echo(f"#{number} already has a Test Plan; guidance not written", err=True)
 
 
 @cli.command()
@@ -335,7 +302,7 @@ def approve(
     guidance: str | None,
 ) -> None:
     """Move queued issues straight to 'planned'."""
-    _report_approved(state.approve(epic_number, targets, guidance))
+    _report(approve_lines(state.approve(epic_number, targets, guidance)))
 
 
 @cli.command("fast-track")
@@ -350,7 +317,7 @@ def fast_track(
     guidance: str | None,
 ) -> None:
     """Queue and approve in one call: unlabelled issues land on 'planned'."""
-    _report_approved(state.fast_track(epic_number, targets, guidance))
+    _report(approve_lines(state.fast_track(epic_number, targets, guidance)))
 
 
 @cli.group()
@@ -982,7 +949,7 @@ def unqueue(
     state: BatchState, targets: tuple[int, ...], epic_number: int | None
 ) -> None:
     """Remove 'queued' from issues that still carry it."""
-    _report("Unqueued", "unqueue", state.unqueue(epic_number, targets))
+    _report(queue_lines("Unqueued", "unqueue", state.unqueue(epic_number, targets)))
 
 
 def _resolve_recovery(ctx: click.Context, root: Path) -> Recovery:
