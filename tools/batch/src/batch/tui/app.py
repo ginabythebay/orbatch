@@ -5,7 +5,7 @@ import subprocess
 import threading
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
-from typing import ClassVar, Protocol, override
+from typing import ClassVar, override
 
 from rich.console import RenderableType
 from textual import work
@@ -14,11 +14,10 @@ from textual.binding import Binding, BindingType
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Footer, Static
 
-from batch.dashboard import Selection
+from batch.dashboard import Driving, Keying, Selection
 from batch.models import (
     Batch,
     DashboardRow,
-    DebugEntry,
     RecoveryAction,
     RecoveryResult,
     RunResult,
@@ -33,21 +32,6 @@ from batch.text_output import (
 
 REFRESH_INTERVAL = 2.0
 FETCH_INTERVAL = 30.0
-
-
-class Driving(Protocol):
-    def run(self, targets: Sequence[int]) -> RunResult: ...
-    def fetch(self, targets: Sequence[int]) -> Batch: ...
-    def render(
-        self, batch: Batch, selected: int | None = None
-    ) -> tuple[DashboardRow, ...]: ...
-    def enter(self, issue_number: int) -> DebugEntry: ...
-
-
-class Keying(Protocol):
-    def rework(self, issue: int) -> RecoveryResult: ...
-    def skip(self, issue: int) -> RecoveryResult: ...
-    def relaunch(self, issue: int) -> RecoveryResult: ...
 
 
 def _apply(verbs: Keying, action: RecoveryAction, issue: int) -> RecoveryResult:

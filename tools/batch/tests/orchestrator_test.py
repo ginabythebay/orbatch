@@ -126,6 +126,7 @@ class TestStackingAndAdvance:
         assert [issue for issue, _ in h.runner.launched] == [10]
         assert h.verifier.asked == [(10, ("main",))]
         assert h.journal == [
+            "stage issue-10.config",
             "label #10 implementing",
             "launch #10",
             "label #10 ready-for-review",

@@ -11,6 +11,7 @@ import pytest
 from textual.binding import Binding
 from textual.pilot import Pilot
 
+from batch.dashboard import Driving
 from batch.models import (
     Batch,
     DashboardRow,
@@ -24,7 +25,7 @@ from batch.models import (
     RunResult,
 )
 from batch.text_output import debug_line
-from batch.tui.app import DashboardApp, Driving
+from batch.tui.app import DashboardApp
 from ghgql.labels import BatchLabel
 from ghgql.transport import RateLimit
 

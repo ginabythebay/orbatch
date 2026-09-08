@@ -18,7 +18,6 @@ from batch.agent import PlanningAgent
 from batch.cli import (
     EMPTY_QUEUE_EXIT,
     _run_root,  # pyright: ignore[reportPrivateUsage]
-    _watch_passes,  # pyright: ignore[reportPrivateUsage]
     cli,
     main,
 )
@@ -42,6 +41,7 @@ from batch.orchestrator import Orchestrator
 from batch.order import MAIN
 from batch.reclaim import Reclaimer
 from batch.recovery import Recovery
+from batch.runtime import Runtime
 from batch.stack import StackManager
 from batch.teardown import Teardown
 from batch.testing.payloads import (
@@ -66,6 +66,7 @@ from batch.testing.payloads import (
     closed_child,
     config_at,
     epic,
+    fake_orchestrator,
     label_ids,
     label_writes,
     no_config_at,
@@ -1081,21 +1082,7 @@ def _orchestrator(
     report: Callable[[str], None] = lambda _line: None,
     polls: Mapping[int, int] | None = None,
 ) -> Orchestrator:
-    clock = FakeClock()
-    stack = FakeStack(root)
-    runner = FakeRunner(root, polls=polls)
-    verifier = FakeVerifier(failing)
-    return Orchestrator(
-        state,
-        stack,
-        runner,
-        verifier,
-        Teardown(state, stack, runner, verifier),
-        config=batch_config(),
-        report=report,
-        sleep=clock.sleep,
-        monotonic=clock.monotonic,
-    )
+    return fake_orchestrator(state, root, failing, report, polls)
 
 
 class TestRun:
@@ -1111,6 +1098,20 @@ class TestRun:
         assert result.exit_code == 0
         assert "#10 ready-for-review on main PR #110" in result.output
         assert "#11 ready-for-review on issue-10 PR #111" in result.output
+
+    def test_an_injected_orchestrator_short_circuits_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _ = no_config_at(monkeypatch, tmp_path / "repo")
+
+        result = CliRunner().invoke(
+            cli,
+            ["run", str(EPIC), "--run-root", str(tmp_path)],
+            obj=_orchestrator(FakeState(batch_issue(10)), tmp_path),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "#10 ready-for-review on main PR #110" in result.output
 
     def test_a_halt_is_reported_and_exits_nonzero(self, tmp_path: Path) -> None:
         state = FakeState(batch_issue(10), batch_issue(11))
@@ -1170,7 +1171,7 @@ class TestRunWatch:
             slept.append(seconds)
             body()
 
-        monkeypatch.setattr("batch.cli.sleep", sleeper)
+        monkeypatch.setattr("batch.runtime.sleep", sleeper)
         return slept
 
     def _invoke(self, tmp_path: Path, state: FakeState, *extra: str) -> Result:
@@ -1356,92 +1357,6 @@ class TestRunWatch:
         assert result.exit_code == 130
 
 
-class TestWatchPassesWrapper:
-    def _drive(self, orchestrator: Orchestrator) -> RunResult:
-        return _watch_passes(
-            orchestrator,
-            (EPIC,),
-            0.0,
-            prog="batch",
-            report=lambda _line: None,
-            echo=False,
-        )
-
-    def _refused(self) -> FakeState:
-        state = FakeState()
-        state.closed.append(batch_issue(9))
-        return state
-
-    def test_a_line_from_the_first_call_is_said_again_on_the_second(
-        self, tmp_path: Path
-    ) -> None:
-        said: list[str] = []
-        orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
-
-        _ = self._drive(orchestrator)
-        _ = self._drive(orchestrator)
-
-        assert said == ["#9 left alone (not-merged)"] * 2
-
-    def test_the_original_report_is_back_once_the_call_returns(
-        self, tmp_path: Path
-    ) -> None:
-        said: list[str] = []
-        orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
-
-        _ = self._drive(orchestrator)
-
-        assert orchestrator.report == said.append
-
-    def test_the_original_report_is_back_after_an_interrupt(
-        self, tmp_path: Path
-    ) -> None:
-        said: list[str] = []
-
-        def interrupt(_state: FakeState) -> None:
-            raise KeyboardInterrupt
-
-        state = self._refused()
-        state.on_fetch = interrupt
-        orchestrator = _orchestrator(state, tmp_path, report=said.append)
-
-        with pytest.raises(SystemExit) as exit_code:
-            _ = self._drive(orchestrator)
-
-        assert exit_code.value.code == 130
-        assert orchestrator.report == said.append
-
-        state.on_fetch = None
-        said.clear()
-        _ = self._drive(orchestrator)
-
-        assert said == ["#9 left alone (not-merged)"]
-
-    def test_a_line_repeated_within_one_pass_is_said_once(self, tmp_path: Path) -> None:
-        said: list[str] = []
-        orchestrator = _orchestrator(self._refused(), tmp_path, report=said.append)
-
-        _ = self._drive(orchestrator)
-
-        assert said == ["#9 left alone (not-merged)"]
-
-    def test_a_line_repeated_across_passes_is_said_again(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        said: list[str] = []
-        state = FakeState(batch_issue(10), queued_targets=(EPIC,))
-        state.closed.append(batch_issue(9))
-
-        def stop_waiting(_seconds: float) -> None:
-            state.queued_targets = ()
-
-        monkeypatch.setattr("batch.cli.sleep", stop_waiting)
-
-        _ = self._drive(_orchestrator(state, tmp_path, report=said.append))
-
-        assert said.count("#9 left alone (not-merged)") == 2
-
-
 def _planning_stack(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1456,7 +1371,7 @@ def _planning_stack(
         return built
 
     _ = config_at(monkeypatch, tmp_path)
-    monkeypatch.setattr("batch.cli.StackManager", stack_at)
+    monkeypatch.setattr("batch.runtime.StackManager", stack_at)
     return built
 
 
@@ -1464,7 +1379,7 @@ PLAN_PID = 4321
 
 
 def _plan_pid(monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setattr("batch.cli.os.getpid", lambda: PLAN_PID)
+    monkeypatch.setattr("batch.runtime.os.getpid", lambda: PLAN_PID)
     return f"plan-{PLAN_PID}"
 
 
@@ -1636,7 +1551,7 @@ class TestPlan:
         def spawn_a_second_session(
             _command: Sequence[str], **_kwargs: object
         ) -> subprocess.CompletedProcess[str]:
-            monkeypatch.setattr("batch.cli.os.getpid", lambda: PLAN_PID + 1)
+            monkeypatch.setattr("batch.runtime.os.getpid", lambda: PLAN_PID + 1)
             inner.append(
                 CliRunner().invoke(
                     cli, ["plan", "1769", "--run-root", str(tmp_path), "--dry-run"]
@@ -1785,13 +1700,14 @@ def _wire(
     def verifier_over_nothing(_client: object) -> FakeVerifier:
         return built.verifier
 
-    for name in ("BatchGitHub", "GitHubGraphQL", "GitHubTransport", "repo"):
-        monkeypatch.setattr(f"batch.cli.{name}", unused)
+    for module in ("batch.cli", "batch.runtime"):
+        for name in ("BatchGitHub", "GitHubGraphQL", "GitHubTransport", "repo"):
+            monkeypatch.setattr(f"{module}.{name}", unused)
+        monkeypatch.setattr(f"{module}.VmRunner", runner_at)
+        monkeypatch.setattr(f"{module}.BatchState", state_over_nothing)
     _ = config_at(monkeypatch, tmp_path)
-    monkeypatch.setattr("batch.cli.BatchState", state_over_nothing)
-    monkeypatch.setattr("batch.cli.StackManager", stack_at)
-    monkeypatch.setattr("batch.cli.VmRunner", runner_at)
-    monkeypatch.setattr("batch.cli.Verifier", verifier_over_nothing)
+    monkeypatch.setattr("batch.runtime.StackManager", stack_at)
+    monkeypatch.setattr("batch.runtime.Verifier", verifier_over_nothing)
     return built
 
 
@@ -2352,7 +2268,7 @@ class TestTheRepoOption:
             seen.append(repo)
             return FakeStack(tmp_path, seed_image=seed_image)
 
-        monkeypatch.setattr("batch.cli.StackManager", stack_at)
+        monkeypatch.setattr("batch.runtime.StackManager", stack_at)
 
         result = CliRunner().invoke(
             cli,
@@ -2433,6 +2349,15 @@ class TestRunRootScoping:
 
         assert _resolved_root(monkeypatch, tmp_path) == str(
             tmp_path / "home" / ".cache" / "batch" / "acme" / "widgets"
+        )
+
+    def test_the_cli_and_a_runtime_agree_on_the_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+        assert _resolved_root(monkeypatch, tmp_path) == str(
+            Runtime.load(tmp_path / "checkout").run_root
         )
 
     def test_an_explicit_flag_is_taken_verbatim(
@@ -2917,7 +2842,7 @@ class TestNarration:
         def sleeper(_seconds: float) -> None:
             state.queued_targets = ()
 
-        monkeypatch.setattr("batch.cli.sleep", sleeper)
+        monkeypatch.setattr("batch.runtime.sleep", sleeper)
         monkeypatch.setattr("batch.cli.run_dashboard", fake)
         monkeypatch.setattr("batch.cli._interactive", lambda: True)
 
@@ -3384,7 +3309,7 @@ class TestBatchToml:
             seeds.append(seed_image)
             return StackManager(sc.repo, seed_image=sc.seed)
 
-        monkeypatch.setattr("batch.cli.StackManager", record)
+        monkeypatch.setattr("batch.runtime.StackManager", record)
         unoccupied(monkeypatch)
 
         result = CliRunner().invoke(
