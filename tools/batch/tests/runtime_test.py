@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -9,8 +10,10 @@ from batch.config import ConfigError
 from batch.models import RunResult
 from batch.orchestrator import Orchestrator
 from batch.runtime import Runtime, watch
+from batch.state import BatchState
 from batch.testing.payloads import (
     EPIC,
+    REPO,
     TEST_COMMANDS,
     TEST_SLUG,
     FakeRunner,
@@ -21,7 +24,9 @@ from batch.testing.payloads import (
     fake_orchestrator,
     write_config,
 )
+from batch.verbs import Verbs
 from batch.vm import DEFAULT_RUN_ROOT, scoped_run_root
+from ghgql.repo import Repo
 
 
 class TestLoad:
@@ -223,3 +228,72 @@ class TestPlanSession:
             f"clean {PLAN_BRANCH}.config",
             f"remove {PLAN_BRANCH}",
         ]
+
+
+class TestDrive:
+    def _runtime(self, monkeypatch: pytest.MonkeyPatch, root: Path) -> Runtime:
+        state = FakeState(batch_issue(10))
+        state.closed.append(batch_issue(9))
+
+        def built(
+            _self: Runtime, *, report: Callable[[str], None], **_kwargs: object
+        ) -> Orchestrator:
+            return fake_orchestrator(state, root, report=report, polls={10: 0})
+
+        monkeypatch.setattr(Runtime, "orchestrator", built)
+        return Runtime(root / "repo", batch_config(), root)
+
+    def test_the_run_narrates_through_report_and_prints_nothing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        said: list[str] = []
+        drive = self._runtime(monkeypatch, tmp_path).drive((EPIC,), said.append)
+
+        result = drive.run()
+
+        assert [outcome.number for outcome in result.outcomes] == [10]
+        assert "#9 left alone (not-merged)" in said
+        assert capsys.readouterr() == ("", "")
+
+    def test_the_verbs_are_scoped_to_the_targets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        drive = self._runtime(monkeypatch, tmp_path).drive((EPIC,), lambda _l: None)
+
+        assert isinstance(drive.verbs, Verbs)
+        assert drive.verbs.skip(10).refusal is None
+        assert drive.verbs.skip(999).refusal is not None
+
+
+def _origin(_path: Path) -> Repo:
+    return REPO
+
+
+class TestLabellingVerbs:
+    @pytest.mark.parametrize(
+        ("verb", "method"),
+        [
+            (Runtime.queue, "queue"),
+            (Runtime.unqueue, "unqueue"),
+            (Runtime.approve, "approve"),
+            (Runtime.fast_track, "fast_track"),
+        ],
+        ids=["queue", "unqueue", "approve", "fast_track"],
+    )
+    def test_each_reaches_the_state_over_the_bare_targets(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        verb: Callable[[Runtime, Sequence[int]], object],
+        method: str,
+    ) -> None:
+        monkeypatch.setattr("batch.runtime.repo", _origin)
+        runtime = Runtime(tmp_path, batch_config(), tmp_path)
+
+        with patch.object(BatchState, method) as called:
+            _ = verb(runtime, (10, 11))
+
+        called.assert_called_once_with(None, (10, 11))

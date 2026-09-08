@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from subprocess import CalledProcessError
 from typing import Protocol, cast, override
 from unittest.mock import call, patch
 
@@ -3318,14 +3319,14 @@ class FakeBatching(Batching):
         self,
         root: Path,
         *,
-        raises: RuntimeError | None = None,
+        raises: Exception | None = None,
         plan: PlanOutcome | None = None,
         run_fails: RuntimeError | None = None,
     ) -> None:
         self.run_root: Path = root
         self.prog: str = _BATCH_PROG
         self.calls: list[tuple[str, tuple[int, ...]]] = []
-        self.raises: RuntimeError | None = raises
+        self.raises: Exception | None = raises
         self.run_fails: RuntimeError | None = run_fails
         self.plan: PlanOutcome = plan or PlanOutcome(("vibe",), 0)
         self.driver: FakeDriver = FakeDriver(_batch_row(20), _batch_row(21))
@@ -3544,10 +3545,18 @@ class TestBatchMenu:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("verb", [verb.value for verb in BatchVerb])
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            RuntimeError("GitHub said 503"),
+            CalledProcessError(128, ["git", "worktree", "add"]),
+        ],
+        ids=["runtime", "git"],
+    )
     async def test_a_verb_that_raises_lands_on_the_status_bar(
-        self, tmp_path: Path, verb: str
+        self, tmp_path: Path, verb: str, failure: Exception
     ) -> None:
-        batching = FakeBatching(tmp_path, raises=RuntimeError("GitHub said 503"))
+        batching = FakeBatching(tmp_path, raises=failure)
         with (
             _patched_github() as client,
             patch.object(OrbitApp, "suspend"),
@@ -3556,7 +3565,7 @@ class TestBatchMenu:
                 await _in_sprint(pilot)
                 app = _the_app(pilot)
                 await _pick(pilot, verb)
-                assert _status_text(app) == "Error: GitHub said 503"
+                assert _status_text(app) == f"Error: {failure}"
                 assert app.is_running
                 assert app.screen is app.screen_stack[0]
 
@@ -3633,14 +3642,40 @@ class TestBatchRun:
         with _patched_github() as client:
             async with _batch_app(client, batching).run_test() as pilot:
                 app = _the_app(pilot)
-                screen = await _running(pilot, batching)
-                assert batching.calls == [("run", (20,))]
-                assert screen.targets == (20,)
+                await _in_sprint(pilot)
+                await pilot.press("space")
+                await pilot.press("space")
+                await _settle(pilot)
+                assert _mark_count_text(app) == "2 marked"
+                await _pick(pilot, "run")
+                screen = app.screen
+                assert isinstance(screen, DashboardScreen)
+                await _until(
+                    pilot, batching.driver.running.is_set, "started the run thread"
+                )
+                assert batching.calls == [("run", (20, 21))]
+                assert screen.targets == (20, 21)
                 assert screen.live
                 assert app.run_live
                 assert not batching.driver.released.is_set()
+                await pilot.press("escape")
+                await _settle(pilot)
                 assert _mark_count_text(app) == ""
+                assert _status_text(app) == "Running batch over #20, #21"
             batching.driver.released.set()
+
+    @pytest.mark.asyncio
+    async def test_d_before_any_run_says_there_is_none(self, tmp_path: Path) -> None:
+        batching = FakeBatching(tmp_path)
+        with _patched_github() as client:
+            async with _batch_app(client, batching).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press("d")
+                await _settle(pilot)
+                assert _status_text(app) == "No batch run to show"
+                assert app.screen is app.screen_stack[0]
+                assert app.is_running
 
     @pytest.mark.asyncio
     async def test_escape_pops_and_d_returns_to_the_same_screen(

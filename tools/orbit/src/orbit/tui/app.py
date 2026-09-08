@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from enum import Enum, auto
+from subprocess import CalledProcessError
 from typing import ClassVar, final, override
 
 import click
@@ -92,6 +93,9 @@ _MAIN_SCREEN_ACTIONS = frozenset(
 _RUN_SCREEN_ACTIONS = frozenset({"show_epics", "show_sprint", "show_backlog"})
 
 RUN_SCREEN = "batch-run"
+# A verb reaches GitHub, the filesystem and git (`StackManager` runs it with
+# check=True); each failure must end on the status bar, never in a panic.
+_VERB_FAILURES = (RuntimeError, OSError, CalledProcessError)
 NOT_CONFIGURED = "This repo is not configured for batch"
 IN_FLIGHT = "Any VM still in flight is left running."
 
@@ -656,7 +660,7 @@ class OrbitApp(App[None]):
     ) -> None:
         try:
             lines = await asyncio.to_thread(_labelled, batching, verb, targets)
-        except RuntimeError as exc:
+        except _VERB_FAILURES as exc:
             self._set_status(f"Error: {exc}")
             return
         self._finish_verb(lines.line)
@@ -665,7 +669,7 @@ class OrbitApp(App[None]):
         try:
             with self.suspend():
                 outcome = batching.plan_session(targets)
-        except (RuntimeError, OSError) as exc:
+        except _VERB_FAILURES as exc:
             self._set_status(f"Error: {exc}")
             return
         line = (
@@ -690,7 +694,7 @@ class OrbitApp(App[None]):
         except BatchInProgressError as exc:
             self._set_status(str(exc))
             return
-        except (RuntimeError, OSError) as exc:
+        except _VERB_FAILURES as exc:
             self._set_status(f"Error: {exc}")
             return
         if self._run_screen is not None:
