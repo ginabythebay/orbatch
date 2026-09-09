@@ -181,12 +181,16 @@ class OrbitApp(App[None]):
         for index, command in enumerate(self._commands):
             self._bindings.bind(command.key, f"custom_command({index})", command.label)
         self._marks = Marks()
-        self._tree = IssueTree(self._marks, id="epic-tree")
+        self._hide_closed = True
+        self._tree = IssueTree(
+            self._marks, id="epic-tree", hide_closed=self._hide_closed
+        )
         self._sprint_list = IssueList(
             self._marks,
             id="sprint-list",
             milestone=milestones.current,
             item_name="sprint issues",
+            hide_closed=self._hide_closed,
         )
         self._backlog_list = IssueList(
             self._marks,
@@ -194,6 +198,7 @@ class OrbitApp(App[None]):
             milestone=milestones.backlog,
             item_name="backlog issues",
             soon_filterable=True,
+            hide_closed=self._hide_closed,
         )
         self._view_widgets: dict[_View, IssueTree | IssueList] = {
             _View.EPICS: self._tree,
@@ -201,7 +206,6 @@ class OrbitApp(App[None]):
             _View.BACKLOG: self._backlog_list,
         }
         self._view = _View.EPICS
-        self._hide_closed = False
 
     @override
     def compose(self) -> ComposeResult:

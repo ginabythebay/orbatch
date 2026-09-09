@@ -343,6 +343,10 @@ def _root_labels(tree: IssueTree) -> list[str]:
     return [_label(node) for node in tree.root.children]
 
 
+def _section_labels(tree: IssueTree) -> list[str]:
+    return [_label(child) for child in tree.root.children[-1].children]
+
+
 def _visible_labels(tree: IssueTree) -> list[str]:
     """The labels on screen: a node shows only while every node above
     it is expanded."""
@@ -387,10 +391,12 @@ class TestEpicsTree:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                assert "Loaded 5 epics, 15 issues" in _status_text(app)
+                await pilot.press("f")
+                await _settle(pilot)
                 tree = app.query_one(IssueTree)
                 assert tree.display
                 assert len(tree.root.children) == 5
-                assert "Loaded 5 epics, 15 issues" in _status_text(app)
 
     @pytest.mark.asyncio
     async def test_right_arrow_expands_epic_lazily(self) -> None:
@@ -498,6 +504,8 @@ class TestEpicsTree:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 # Expand epic 905, move down to its nested epic 911, expand it.
                 await pilot.press("right")
                 await _settle(pilot)
@@ -756,7 +764,53 @@ class TestViewSwitching:
 
 class TestHideClosed:
     @pytest.mark.asyncio
-    async def test_f_hides_closed_epics(self) -> None:
+    async def test_the_app_starts_with_closed_issues_hidden(self) -> None:
+        with _patched_github() as client:
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                labels = _root_labels(app.query_one(IssueTree))
+                assert any("#905" in label for label in labels)
+                assert not any("#852" in label or "#853" in label for label in labels)
+                assert any("filtered" in label for label in labels)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("key", "list_id"),
+        [("c", "#sprint-list"), ("b", "#backlog-list")],
+    )
+    async def test_the_flat_views_start_with_closed_issues_hidden(
+        self, key: str, list_id: str
+    ) -> None:
+        issues = [
+            MilestoneIssue(
+                number=number,
+                state=state,
+                title=title,
+                parent_number=None,
+                is_epic=False,
+            )
+            for number, state, title in ((40, "CLOSED", "done"), (41, "OPEN", "live"))
+        ]
+        with (
+            _patched_github() as client,
+            patch.object(client, "list_issues_by_milestone", return_value=issues),
+        ):
+            async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                app = _the_app(pilot)
+                await pilot.press(key)
+                await _settle(pilot)
+                issue_list = app.query_one(list_id, IssueList)
+                ids = [
+                    issue_list.get_option_at_index(index).id
+                    for index in range(issue_list.option_count)
+                ]
+                assert ids == [None, "41"]
+                assert issue_list.get_option_at_index(0).disabled
+
+    @pytest.mark.asyncio
+    async def test_f_reveals_closed_issues(self) -> None:
         with _patched_github() as client:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
@@ -764,10 +818,9 @@ class TestHideClosed:
                 await pilot.press("f")
                 await _settle(pilot)
                 labels = _root_labels(app.query_one(IssueTree))
-                assert any("#905" in label for label in labels)
-                assert not any("#852" in label or "#853" in label for label in labels)
-                assert any("filtered" in label for label in labels)
-                assert "Hide closed: on" in _status_text(app)
+                assert any("#852" in label for label in labels)
+                assert not any("filtered" in label for label in labels)
+                assert "Hide closed: off" in _status_text(app)
 
     @pytest.mark.asyncio
     async def test_adjacent_dead_epics_merge_into_one_node(self) -> None:
@@ -775,8 +828,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 labels = _root_labels(app.query_one(IssueTree))
                 assert [label for label in labels if "filtered" in label] == [
                     "<2 issues filtered>",
@@ -795,8 +846,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down", "down", "right")
                 await _settle(pilot)
                 mock_subs.assert_called_once_with(860)
@@ -813,8 +862,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down", "right")
                 await _settle(pilot)
                 node = app.query_one(IssueTree).root.children[1]
@@ -827,19 +874,19 @@ class TestHideClosed:
                 assert not node.is_expanded
 
     @pytest.mark.asyncio
-    async def test_toggling_back_restores_the_full_tree(self) -> None:
+    async def test_toggling_back_hides_them_again(self) -> None:
         with _patched_github() as client:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
                 await pilot.press("f")
                 await _settle(pilot)
+                assert len(_root_labels(app.query_one(IssueTree))) == 5
                 await pilot.press("f")
                 await _settle(pilot)
                 labels = _root_labels(app.query_one(IssueTree))
-                assert len(labels) == 5
-                assert not any("filtered" in label for label in labels)
-                assert "Hide closed: off" in _status_text(app)
+                assert any("filtered" in label for label in labels)
+                assert "Hide closed: on" in _status_text(app)
 
     @pytest.mark.asyncio
     async def test_expansion_survives_a_refresh_with_the_filter_on(self) -> None:
@@ -847,8 +894,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down", "down", "right")
                 await _settle(pilot)
                 await pilot.press("r")
@@ -870,8 +915,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down", "right", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -899,8 +942,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("g")
                 await _settle(pilot)
                 await pilot.press("9", "2", "0", "enter")
@@ -919,8 +960,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("right", "down", "down", "right")
                 await _settle(pilot)
                 run = app.query_one(IssueTree).root.children[0].children[1]
@@ -936,8 +975,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down", "enter")
                 await _settle(pilot)
                 assert not isinstance(app.screen, DetailScreen)
@@ -968,8 +1005,6 @@ class TestHideClosed:
                 app = _the_app(pilot)
                 await pilot.press("c")
                 await _settle(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 issue_list = app.query_one("#sprint-list", IssueList)
                 assert issue_list.option_count == 3
                 assert issue_list.get_option_at_index(0).disabled
@@ -989,6 +1024,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right", "down", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -1015,6 +1052,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right", "down", "down")
                 await _settle(pilot)
                 await pilot.press("f")
@@ -1035,6 +1074,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right", "down", "down", "right", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -1063,6 +1104,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right", "down", "down", "right", "down", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -1085,8 +1128,6 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("g")
                 await _settle(pilot)
                 await pilot.press("9", "1", "3", "enter")
@@ -1108,6 +1149,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right", "down", "down")
                 await _settle(pilot)
                 await pilot.press("f")
@@ -1124,6 +1167,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("down", "down", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -1148,6 +1193,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right", "down", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -1167,6 +1214,8 @@ class TestHideClosed:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("down", "down")
                 await _settle(pilot)
                 tree = app.query_one(IssueTree)
@@ -1193,7 +1242,7 @@ class TestHideClosed:
                 await _settle(pilot)
                 await pilot.press("escape")
                 await _settle(pilot)
-                assert not any(
+                assert any(
                     "filtered" in label
                     for label in _root_labels(app.query_one(IssueTree))
                 )
@@ -1235,6 +1284,8 @@ class TestStandaloneSection:
     async def test_standalone_issues_land_in_a_section_after_the_epics(self) -> None:
         with _standalone_github() as client:
             async with _app(client).run_test() as pilot:
+                await _settle(pilot)
+                await pilot.press("f")
                 await _settle(pilot)
                 tree = _the_app(pilot).query_one(IssueTree)
                 labels = _root_labels(tree)
@@ -1308,8 +1359,6 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
                 assert [_label(child) for child in section.children] == [
                     "#30 solo a",
@@ -1328,8 +1377,6 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 section = app.query_one(IssueTree).root.children[-1]
                 assert str(section.label) == "STANDALONE"
                 assert [_label(child) for child in section.children] == [
@@ -1342,16 +1389,13 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                before = _section_labels(app.query_one(IssueTree))
                 await pilot.press("f")
                 await _settle(pilot)
+                assert _section_labels(app.query_one(IssueTree)) != before
                 await pilot.press("f")
                 await _settle(pilot)
-                section = app.query_one(IssueTree).root.children[-1]
-                assert [_label(child) for child in section.children] == [
-                    "#30 solo a",
-                    "#31 solo b",
-                    "#32 solo c",
-                ]
+                assert _section_labels(app.query_one(IssueTree)) == before
 
     @pytest.mark.asyncio
     async def test_expanding_the_section_or_its_placeholder_fetches_nothing(
@@ -1364,8 +1408,6 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down", "down", "down", "down")
                 await pilot.press("left", "right")
                 await _settle(pilot)
@@ -1386,6 +1428,8 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press(
                     "down", "down", "down", "down", "down", "down", "down"
                 )
@@ -1400,6 +1444,8 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("down", "down", "down", "down", "down", "left")
                 assert not app.query_one(IssueTree).root.children[-1].is_expanded
                 await pilot.press("r")
@@ -1449,8 +1495,6 @@ class TestStandaloneSection:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 tree = app.query_one(IssueTree)
                 assert tree.reveal_loaded(31)
                 assert tree.selected_issue_number == 31
@@ -2238,6 +2282,8 @@ class TestGotoIssue:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("b")
                 await _settle(pilot)
                 await pilot.press("g")
@@ -2640,8 +2686,6 @@ class TestGotoStandalone:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("g")
                 await _settle(pilot)
                 await pilot.press("3", "1", "enter")
@@ -2662,8 +2706,6 @@ class TestGotoStandalone:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("g")
                 await _settle(pilot)
                 await pilot.press("3", "1", "enter")
@@ -2687,8 +2729,6 @@ class TestGotoStandalone:
                 await _settle(pilot)
                 app = _the_app(pilot)
                 await pilot.press("right")
-                await _settle(pilot)
-                await pilot.press("f")
                 await _settle(pilot)
                 await pilot.press("g")
                 await _settle(pilot)
@@ -2731,8 +2771,6 @@ class TestGotoStandalone:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 app = _the_app(pilot)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("g")
                 await _settle(pilot)
                 await pilot.press("3", "0", "enter")
@@ -2970,6 +3008,8 @@ class TestMarks:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
                 last = tree.root.children[-1]
                 await pilot.press("end")
                 await pilot.press("space")
@@ -3026,12 +3066,15 @@ class TestMarks:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("space")
                 await pilot.press("space")
                 await _settle(pilot)
+                fetches = mock_epics.call_count
                 await pilot.press("r")
                 await _settle(pilot)
-                assert mock_epics.call_count == 2
+                assert mock_epics.call_count == fetches + 1
                 assert [_marked(node) for node in tree.root.children] == [
                     True,
                     True,
@@ -3105,8 +3148,6 @@ class TestMarks:
                 await _settle(pilot)
                 app = _the_app(pilot)
                 tree = app.query_one(IssueTree)
-                await pilot.press("f")
-                await _settle(pilot)
                 await pilot.press("down")
                 run = tree.cursor_node
                 assert run is not None
@@ -3172,8 +3213,6 @@ class TestMarks:
                 await _settle(pilot)
                 app = _the_app(pilot)
                 await pilot.press("c")
-                await _settle(pilot)
-                await pilot.press("f")
                 await _settle(pilot)
                 issue_list = app.query_one("#sprint-list", IssueList)
                 assert issue_list.selected_issue_number == 30
@@ -3242,6 +3281,8 @@ class TestMarks:
             async with _app(client).run_test() as pilot:
                 await _settle(pilot)
                 tree = _the_app(pilot).query_one(IssueTree)
+                await pilot.press("f")
+                await _settle(pilot)
                 await pilot.press("right")
                 await _settle(pilot)
                 top, under_epic = (

@@ -230,8 +230,9 @@ Screens can return values: `EpicPickerScreen` is
 ## State
 
 The app holds four pieces of state: `_view` (an enum: EPICS / SPRINT /
-BACKLOG), `_hide_closed`, which it fans out to every view widget
-because that filter applies to all of them, `_marks`, a `Marks`
+BACKLOG), `_hide_closed`, which starts on and which it fans out to every view
+widget — at construction as well as on the toggle — because that
+filter applies to all of them, `_marks`, a `Marks`
 store (`orbit.marks`) of dired-style marks keyed by issue number and
 shared by every view widget, so marks outlive a refresh or a view
 switch, and `_run_screen`, the installed batch run screen if a run has
