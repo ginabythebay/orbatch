@@ -865,3 +865,51 @@ new flags are a contract change for every target repo's agent script —
 `batch.toml` in this repo carries a `[models]` table. `--model` on `run`,
 `vm console` and `vwt` now overrides every step of that invocation, so there
 is no way to override one step alone from the command line.
+
+## 2026-09-08 — issue #47 inject .claude/*-guidance.md via PostToolUse hooks
+
+https://github.com/ginabythebay/orbatch/issues/47
+
+Decisions:
+- Five `PostToolUse` / `matcher: "Bash"` hooks in `.claude/settings.json`,
+  each the upstream one-liner: `jq -r '.tool_input.command'` -> `grep -qE` ->
+  `jq -n --rawfile guidance .../<file>` emitting `additionalContext`, else
+  `jq -n '{}'`. Issue's design decision: one-liners in JSON, not a script per
+  hook, so they stay diffable against the copy they came from.
+- Patterns ANCHORED with `(^|[[:space:]/])…([[:space:]]|$)` — the issue said
+  "verbatim", but unanchored `lint`/`pytest`/`git commit` inject a whole file
+  for any mention (`rg -n linting`, `cat .claude/pytest-guidance.md`), and
+  `no-bare-basedpyright.sh` already anchors. `create-epic` ordered before
+  `create` in the alternation.
+- Issue hook fires for `gh issue (create|edit)` and
+  `orbit (create-epic|create|set-body|move|reorder|schedule)`. `orbit edit`
+  DROPPED (browser open only, 400 lines of guidance for a no-op); `move` /
+  `reorder` / `schedule` ADDED — that is where issue-guidance's epic-ordering
+  and keep-the-epic-open rules apply.
+- `tests/claude_settings_test.py` (new, root `tests/`, not a workspace member —
+  it tests this repo's own config): settings parses; every `.claude/…` path
+  named in a hook command or in CLAUDE.md exists; every `*-guidance.md` is
+  referenced by some hook. A hook whose `--rawfile` is missing emits `{}` and
+  exits 0, so a rename is otherwise silent. Verified red by renaming
+  `pytest-guidance.md`.
+- CLAUDE.md: `## Current Sprint` gains the orbit-create paragraph + pointer to
+  `.claude/issue-guidance.md`; `## Version Control` gains a one-line prefer-orbit
+  sentence. Wording separates create (defaults to current milestone) from
+  move/schedule/reorder — the first draft called all four creating commands.
+- Hand-verified with an extracted-command harness, 26 cases (each hook's
+  triggers + negatives). No Python drives the hooks; the harness is not
+  committed.
+
+Files: .claude/settings.json, CLAUDE.md, tests/claude_settings_test.py (new).
+
+Review: five findings, four fixed (the CLAUDE.md command description, the
+missing existence test, unanchored patterns, hook/doc list disagreement), one
+declined and filed as `#55` — move the bodies into a shared
+`.claude/hooks/inject-guidance.sh` and use `"if"` filters so a Bash call does
+not spawn five pipelines; declined because `#47` ruled explicitly the other
+way and the `"if"`-on-PostToolUse half is unverified.
+
+Notes for next iteration: `#32`, `#34`, `#55` open. The hooks are live for any
+session in this checkout — that is why so much guidance text appears in tool
+output now. Out of scope and unfiled: the upstream `format-python.sh`
+Write/Edit hooks.

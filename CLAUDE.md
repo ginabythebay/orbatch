@@ -39,6 +39,17 @@ The active sprint milestone is defined once, in `.orbit.toml` at the
 repo root (`[milestone] current`). Run `uv run orbit sprint` to see it
 and its open issues.
 
+Create sprint issues with `uv run orbit create` and `orbit create-epic`,
+which default to the current milestone. `orbit move` renests an issue
+under an epic and takes that epic's milestone, `orbit schedule` changes
+an issue's milestone, and `orbit reorder` sets implementation order
+within an epic. See
+`.claude/issue-guidance.md` for the rules: every leaf title carries an
+AFK/HITL marker and a line estimate, every leaf belongs to an epic or is
+standalone, and an issue whose files and tests are already known gets
+`## Design decisions` and `## Test Plan` at creation plus the `planned`
+label.
+
 ## Commands
 
 ```bash
@@ -234,6 +245,10 @@ A test must not read or write anything under `$HOME`. Use `tmp_path`.
 
 Use [Conventional Commits](https://www.conventionalcommits.org/)
 (`feat:`, `fix:`, etc.) for commit subjects.
+
+Prefer `uv run orbit` over raw `gh` for issue and epic structure
+operations — it knows the milestone and the sub-issue graph; see
+`.claude/issue-guidance.md`.
 
 The PR body must carry a `## Caveats` section — what you could not
 verify, assumptions the change rests on, work left undone. `None.` under
