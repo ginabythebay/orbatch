@@ -826,7 +826,7 @@ class TestHostedScreen:
 
         async with app.run_test() as pilot:
             await _settle(app, pilot, 1)
-            await pilot.press("escape")
+            await pilot.press("q")
             await pilot.pause(0.1)
 
             assert not app.is_running
