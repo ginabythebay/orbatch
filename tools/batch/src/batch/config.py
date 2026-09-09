@@ -2,12 +2,13 @@
 
 batch ships no project-specific behavior: the repo names its own seed
 image under `[vm]`, its own GitHub identity and the keychain item
-holding its guest token under `[repo]`, and, under `[commands]`, both
-the scripts batch drives and the wrapper it is invoked through.
-Repo-root discovery is the caller's (batch runs from worktrees, so the
-root is `main_repo()`, never the cwd); parsing and validation sit
-behind `load_config` and `BatchConfig`, so callers get either a usable
-config or a `ConfigError` naming every problem at once.
+holding its guest token under `[repo]`, under `[commands]` both the
+scripts batch drives and the wrapper it is invoked through, and under
+`[models]` the model each step of the pipeline runs on. Repo-root
+discovery is the caller's (batch runs from worktrees, so the root is
+`main_repo()`, never the cwd); parsing and validation sit behind
+`load_config` and `BatchConfig`, so callers get either a usable config
+or a `ConfigError` naming every problem at once.
 """
 
 from __future__ import annotations
@@ -17,12 +18,15 @@ import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 CONFIG_FILENAME = "batch.toml"
 _SLUG = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 _COMMAND_KEYS = ("cli", "setup", "session", "agent", "plan_batch")
 _REPO_STRING_KEYS = ("author_name", "author_email", "github_token_item")
+_MODEL_KEYS = ("default", "plan", "implement", "review", "debug")
+
+Step = Literal["default", "plan", "implement", "review", "debug"]
 
 
 class ConfigError(RuntimeError):
@@ -67,6 +71,31 @@ class _Repo:
 
 
 @dataclass(frozen=True)
+class Models:
+    """`[models]`: which model each step of the pipeline runs on."""
+
+    default: str | None = None
+    plan: str | None = None
+    implement: str | None = None
+    review: str | None = None
+    debug: str | None = None
+
+    def resolve(self, step: Step, override: str | None = None) -> str | None:
+        """The model a step runs on, or None to leave the flag off entirely."""
+        chosen = {
+            "default": self.default,
+            "plan": self.plan,
+            "implement": self.implement,
+            "review": self.review,
+            "debug": self.debug,
+        }[step]
+        return override or chosen or self.default
+
+
+NO_MODELS = Models()
+
+
+@dataclass(frozen=True)
 class BatchConfig:
     seed_image: Path
     slug: str
@@ -74,6 +103,7 @@ class BatchConfig:
     author_email: str
     github_token_item: str
     commands: Commands
+    models: Models = NO_MODELS
 
 
 def load_config(repo: Path) -> BatchConfig:
@@ -94,7 +124,14 @@ def _parse(path: Path, text: str) -> BatchConfig:
     seed_image = _parse_vm(document.get("vm"), problems)
     repo = _parse_repo(document.get("repo"), problems)
     commands = _parse_commands(document.get("commands"), problems)
-    if problems or seed_image is None or repo is None or commands is None:
+    models = _parse_models(document.get("models"), problems)
+    if (
+        problems
+        or seed_image is None
+        or repo is None
+        or commands is None
+        or models is None
+    ):
         raise ConfigError(path, problems)
     return BatchConfig(
         seed_image=seed_image.expanduser(),
@@ -103,6 +140,7 @@ def _parse(path: Path, text: str) -> BatchConfig:
         author_email=repo.author_email,
         github_token_item=repo.github_token_item,
         commands=commands,
+        models=models,
     )
 
 
@@ -193,3 +231,28 @@ def _parse_commands(raw: object, problems: list[str]) -> Commands | None:
     if len(values) < len(_COMMAND_KEYS):
         return None
     return Commands(**values)
+
+
+def _parse_models(raw: object, problems: list[str]) -> Models | None:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        problems.append('"models" must be a [models] table')
+        return None
+
+    table = cast("dict[str, object]", raw)
+    values: dict[str, str] = {}
+    for key in _MODEL_KEYS:
+        value = table.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            problems.append(f'models: "{key}" must be a non-empty string')
+        else:
+            values[key] = value
+
+    unknown = sorted(set(table) - set(_MODEL_KEYS))
+    if unknown:
+        problems.append(f"models: unknown key(s) {', '.join(unknown)}")
+
+    return Models(**values)

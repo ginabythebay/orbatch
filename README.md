@@ -43,10 +43,11 @@ backlog. `orbit` discovers it through `git rev-parse --show-toplevel`, so
 commands work from any subdirectory.
 
 `batch.toml` at the root of the repo being driven names the seed image, the
-slug, the git author, the keychain item holding the guest token, and the five
-commands `batch` shells out to. It belongs to that repo, not to this one, so
-`batch --repo PATH` (or a working directory inside the checkout) is what
-locates it.
+slug, the git author, the keychain item holding the guest token, the five
+commands `batch` shells out to, and, under an optional `[models]` table, the
+model each step (`default`, `plan`, `implement`, `review`, `debug`) runs on.
+It belongs to that repo, not to this one, so `batch --repo PATH` (or a
+working directory inside the checkout) is what locates it.
 
 `$XDG_CONFIG_HOME/orbatch/snippets.toml` (by default
 `~/.config/orbatch/snippets.toml`) lists the checkouts a `snippets` rollup

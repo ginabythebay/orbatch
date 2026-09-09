@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from batch.body import DEFAULT_GUIDANCE
+from batch.config import NO_MODELS, Models
 from batch.models import (
     DEFAULT_RAM,
     BatchIssue,
@@ -78,6 +79,7 @@ def harness(
     timeout: float = 7200.0,
     verify_wait: float = 2700.0,
     model: str | None = None,
+    models: Models = NO_MODELS,
     ram: int = DEFAULT_RAM,
     boot_code: int = 0,
     dtach_missing: bool = False,
@@ -103,7 +105,7 @@ def harness(
         runner,
         verifier,
         Teardown(state, stack, runner, verifier),
-        config=batch_config(),
+        config=batch_config(models=models),
         report=reported.append,
         sleep=clock.sleep,
         monotonic=clock.monotonic,
@@ -257,7 +259,45 @@ class TestPromptAssembly:
         _ = h.core.run((EPIC,))
 
         assert h.runner.agents() == [
-            "tools/drive 10 --impl-only --headless --base main --model opus"
+            (
+                "tools/drive 10 --impl-only --headless --base main"
+                " --model opus --plan-model opus --review-model opus"
+            )
+        ]
+
+    def test_the_config_models_reach_the_agent_command(self, tmp_path: Path) -> None:
+        h = harness(
+            batch_issue(10, body=PLAN_BODY),
+            root=tmp_path,
+            models=Models(
+                default="sonnet", implement="opus", plan="fable", review="haiku"
+            ),
+        )
+
+        _ = h.core.run((EPIC,))
+
+        assert h.runner.agents() == [
+            (
+                "tools/drive 10 --impl-only --headless --base main"
+                " --model opus --plan-model fable --review-model haiku"
+            )
+        ]
+
+    def test_the_cli_model_overrides_every_step(self, tmp_path: Path) -> None:
+        h = harness(
+            batch_issue(10, body=PLAN_BODY),
+            root=tmp_path,
+            model="opus",
+            models=Models(default="sonnet", plan="fable", review="haiku"),
+        )
+
+        _ = h.core.run((EPIC,))
+
+        assert h.runner.agents() == [
+            (
+                "tools/drive 10 --impl-only --headless --base main"
+                " --model opus --plan-model opus --review-model opus"
+            )
         ]
 
 

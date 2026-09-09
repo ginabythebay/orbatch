@@ -21,7 +21,6 @@ from batch.testing.scratch import SEED_CONTENT, TRACKED_FILE, Scratch, git, scra
 from batch.vm import VmRunner
 from batch.worktree import (
     CONFIRM,
-    DEFAULT_MODEL,
     CliConsole,
     Console,
     WorktreeSession,
@@ -319,7 +318,7 @@ class TestCommandLine:
         assert result.exit_code == 3, result.output
         assert spawned
 
-    def test_the_model_is_pinned_and_the_short_flags_are_honoured(
+    def test_the_short_flags_are_honoured(
         self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         result, spawned = self._invoke(
@@ -328,16 +327,26 @@ class TestCommandLine:
 
         assert result.exit_code == 0, result.output
         [command] = spawned
-        assert command[-8:] == (
+        assert command[-6:] == (
             "--issue",
             "42",
-            "--model",
-            DEFAULT_MODEL,
             "--max-tests",
             "3",
             "--plan-guidance",
             "stay small",
         )
+
+    def test_the_model_is_the_repos_to_choose_unless_the_flag_names_one(
+        self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        silent, quiet_spawn = self._invoke(sc, monkeypatch, ["fix-thing", "42"])
+        named, loud_spawn = self._invoke(
+            sc, monkeypatch, ["fix-thing", "42", "--model", "fable"]
+        )
+
+        assert (silent.exit_code, named.exit_code) == (0, 0)
+        assert "--model" not in quiet_spawn[0]
+        assert loud_spawn[0][-2:] == ("--model", "fable")
 
     def test_the_positional_guidance_reaches_the_argv(
         self, sc: Scratch, monkeypatch: pytest.MonkeyPatch
@@ -348,13 +357,11 @@ class TestCommandLine:
 
         assert result.exit_code == 0, result.output
         [command] = spawned
-        assert command[-6:] == (
+        assert command[-4:] == (
             "--issue",
             "42",
             "--guidance",
             "write it twice",
-            "--model",
-            DEFAULT_MODEL,
         )
 
     @pytest.mark.parametrize(

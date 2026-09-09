@@ -134,13 +134,18 @@ class Debugger:
                 missing=self._stack.missing(branch),
             )
         config_dir = self._runner.config_dir(issue_number)
+        models = self._config.models
         session = session_for(
             slot,
             mount_root=self._stack.mount_root,
             config_dir=config_dir,
-            agent=agent_command(self._config, model=self._model)
+            agent=agent_command(
+                self._config, model=models.resolve("default", self._model)
+            )
             if fresh
-            else debug_agent_command(self._config, issue_number, model=self._model),
+            else debug_agent_command(
+                self._config, issue_number, model=models.resolve("debug", self._model)
+            ),
             ram=self._ram,
         )
         boot = self._runner.debug_command(issue_number, session)
@@ -272,6 +277,7 @@ class Orchestrator:
         config_dir = self._runner.config_dir(issue.number)
         self._runner.write_config(config_dir, headless=True)
         plan = has_test_plan(issue.body)
+        models = self._config.models
         session = session_for(
             slot,
             mount_root=self._stack.mount_root,
@@ -281,7 +287,9 @@ class Orchestrator:
                 issue=issue.number,
                 guidance=None if plan else guidance(issue.body) or DEFAULT_GUIDANCE,
                 base=base,
-                model=self._model,
+                model=models.resolve("implement", self._model),
+                plan_model=models.resolve("plan", self._model),
+                review_model=models.resolve("review", self._model),
                 impl_only=plan,
                 headless=True,
                 predecessors=[other.number for other in stacked(batch, issue)],

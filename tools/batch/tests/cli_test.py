@@ -49,6 +49,7 @@ from batch.testing.payloads import (
     EPIC_TITLE,
     TEST_COMMANDS,
     TEST_COMMANDS_TOML,
+    TEST_CONFIG_TOML,
     TEST_REPO_TOML,
     TEST_SEED,
     TEST_SLUG,
@@ -774,6 +775,46 @@ class TestVm:
         assert "poweroff" not in result.output
         assert "tools/drive 1499" in result.output
 
+    def test_the_config_models_reach_a_console_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _ = config_at(
+            monkeypatch,
+            tmp_path / "repo",
+            TEST_CONFIG_TOML
+            + '[models]\ndefault = "opus"\nimplement = "sonnet"\nreview = "fable"\n',
+        )
+
+        def console(*extra: str) -> Result:
+            return CliRunner().invoke(
+                cli,
+                [
+                    "vm",
+                    "console",
+                    "--worktree",
+                    "issue-1499",
+                    "--disk",
+                    str(tmp_path / "issue-1499.raw"),
+                    "--config-dir",
+                    str(tmp_path / "config"),
+                    "--dry-run",
+                    *extra,
+                ],
+                obj=self._runner(tmp_path),
+            )
+
+        worked = console("--issue", "1499")
+        bare = console()
+
+        assert (worked.exit_code, bare.exit_code) == (0, 0)
+        assert (
+            "tools/drive 1499 --model sonnet --plan-model opus --review-model fable"
+            in worked.output
+        )
+        assert "claude --model opus " in bare.output
+        assert "--plan-model" not in bare.output
+        assert "--review-model" not in bare.output
+
     def test_a_relative_worktree_still_claims_the_bare_branch(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1406,6 +1447,20 @@ class TestPlan:
         assert str(stack.worktree_root / f"{branch}.raw") in result.output
         assert f"tools/plan {EPIC} --model opus" in result.output
 
+    def test_the_plan_model_reaches_the_planning_vm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _ = _planning_stack(monkeypatch, tmp_path)
+        _ = _plan_pid(monkeypatch)
+        _ = config_at(
+            monkeypatch, tmp_path, TEST_CONFIG_TOML + '[models]\nplan = "fable"\n'
+        )
+
+        result = self._invoke(tmp_path)
+
+        assert result.exit_code == 0, result.output
+        assert f"tools/plan {EPIC} --model fable" in result.output
+
     def test_every_target_named_reaches_the_planning_session(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1736,7 +1791,8 @@ class TestRunConstruction:
         assert result.exit_code == 0, result.output
         expected = (
             "tools/drive 10 'Do not add new tests. The existing test suite and "
-            "lint must stay green.' --headless --base main --model opus"
+            "lint must stay green.' --headless --base main"
+            " --model opus --plan-model opus --review-model opus"
         )
         assert built.runner.agents() == [expected]
 
@@ -2964,6 +3020,37 @@ class TestDebug:
         assert "tools/session" not in result.output
         flags = "--allow-dangerously-skip-permissions --dangerously-skip-permissions"
         assert f"--send 'tools/prepare && claude {flags}'" in result.output
+
+    def test_the_debug_model_reaches_the_resumed_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, run = self._roots(tmp_path, monkeypatch)
+        _ = config_at(
+            monkeypatch,
+            tmp_path / "trees",
+            TEST_CONFIG_TOML + '[models]\ndefault = "opus"\ndebug = "sonnet"\n',
+        )
+
+        result = self._invoke(run, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert "tools/session 1597 --debug -- --model sonnet " in result.output
+
+    def test_a_fresh_session_falls_back_to_the_default_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, run = self._roots(tmp_path, monkeypatch)
+        _ = config_at(
+            monkeypatch,
+            tmp_path / "trees",
+            TEST_CONFIG_TOML + '[models]\ndefault = "opus"\ndebug = "sonnet"\n',
+        )
+
+        result = self._invoke(run, "--fresh", "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert "claude --model opus " in result.output
+        assert "--plan-model" not in result.output
 
     def test_the_boot_is_detached_so_the_socket_guards_the_disk(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

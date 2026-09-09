@@ -74,6 +74,8 @@ def agent_command(
     guidance: str | None = None,
     base: str | None = None,
     model: str | None = None,
+    plan_model: str | None = None,
+    review_model: str | None = None,
     impl_only: bool = False,
     rework: bool = False,
     headless: bool = False,
@@ -81,7 +83,12 @@ def agent_command(
     max_tests: int | None = None,
     plan_guidance: str | None = None,
 ) -> str:
-    """The command the VM runs once setup finishes; no issue means a bare session."""
+    """The command the VM runs once setup finishes; no issue means a bare session.
+
+    A bare session is claude itself, so it takes `--model` alone; the agent
+    script is the only one contracted to accept `--plan-model` and
+    `--review-model`.
+    """
     if issue is None:
         if headless:
             raise ValueError("A bare session has no prompt to run headless.")
@@ -104,6 +111,8 @@ def agent_command(
         if plan_guidance is not None:
             argv += ["--plan-guidance", plan_guidance]
         argv += _model_flag(model)
+        argv += _model_flag(plan_model, "--plan-model")
+        argv += _model_flag(review_model, "--review-model")
     return shlex.join(argv)
 
 
@@ -144,8 +153,8 @@ def plan_slot_branch(pid: int) -> str:
     return f"plan-{pid}"
 
 
-def _model_flag(model: str | None) -> list[str]:
-    return ["--model", model] if model else []
+def _model_flag(model: str | None, flag: str = "--model") -> list[str]:
+    return [flag, model] if model else []
 
 
 def _predecessors_flag(predecessors: Sequence[int]) -> list[str]:
