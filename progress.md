@@ -913,3 +913,44 @@ Notes for next iteration: `#32`, `#34`, `#55` open. The hooks are live for any
 session in this checkout — that is why so much guidance text appears in tool
 output now. Out of scope and unfiled: the upstream `format-python.sh`
 Write/Edit hooks.
+
+## 2026-09-08 — issue #48 format Python on Write/Edit with a ruff hook
+
+https://github.com/ginabythebay/orbatch/issues/48
+
+Decisions:
+- `.claude/hooks/format-python.sh` copied from the extraction repo (found on
+  disk, not retyped), 755, plus `PostToolUse` entries with `matcher: "Write"`
+  and `matcher: "Edit"` placed BEFORE the `Bash` entry from `#47`. Body kept:
+  `jq -r .tool_input.file_path`, three early exits (non-`.py`, outside
+  `$CLAUDE_PROJECT_DIR`, deleted), then `ruff check --fix --quiet --select
+  I001` and `ruff format --quiet`, each `|| echo` so a half-written file
+  never blocks its own edit.
+- Comment rewritten as the issue asked (upstream issue number dropped) and a
+  second paragraph added: `dev/lint` uses `env -u VIRTUAL_ENV`, this does not,
+  because `uv run` from the project dir already resolves the live env.
+- Test plan said "no pytest"; that held only for the first commit. Review
+  argued the guards and the `--select I001` pin are exactly what a future
+  edit would widen invisibly, and it is right — `tests/format_python_hook_test.py`
+  now drives the script through `subprocess.run` with `CLAUDE_PROJECT_DIR`
+  pointed at `tmp_path`. NOT marked `slow`: 0.2s for six cases.
+- `tests/claude_settings_test.py` gained an executable-bit guard over every
+  `.claude/hooks/*` a hook command names. It earned its keep immediately —
+  `sed -i` drops the mode bit, which broke the hook twice during this task and
+  is otherwise silent (a non-executable hook just fails).
+- Mutation-verified: widening `--select`, dropping the project guard, and
+  dropping the `.py` guard each turn exactly one test red.
+
+Files: .claude/hooks/format-python.sh (new, 755), .claude/settings.json,
+tests/claude_settings_test.py, tests/format_python_hook_test.py (new).
+
+Review: three findings, all fixed — no pytest coverage of the hook, three
+comments restating the line below them (CLAUDE.md forbids them; "copied
+verbatim" does not override that), and a parametrized test that degrades to
+a skip when its list is empty.
+
+Notes for next iteration: `#32`, `#34`, `#55` remain open. The review's raw
+output quotes the extraction repo's name (the issue body does too), so it was
+scrubbed to `<upstream>` before going into the PR body — this repo is public.
+`git status` cannot see a mode-only change to a file you also edited with
+`sed -i`; check `stat -c %a` after any in-place edit of a hook.
