@@ -13,3 +13,6 @@ setup = "dev/setup-agent-vm"
 session = "dev/claude-session"
 agent = "dev/ralph"
 plan_batch = "dev/ralph-plan-batch"
+
+[models]
+default = "opus"
